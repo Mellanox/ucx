@@ -5,7 +5,7 @@ trigger: none
 resources:
   pipelines:
   - pipeline: myTest
-    source: 'UCX test'
+    source: 'UCX snapshot'
     trigger: true
 
 
