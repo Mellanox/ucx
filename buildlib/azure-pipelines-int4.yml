@@ -61,5 +61,5 @@ stages:
               git fetch upstream
               git rebase upstream/master
               git push origin avildema-patch-1 --force
-  - template: templates/main-stages.yml
+  - template: main-pipeline.yml
 
