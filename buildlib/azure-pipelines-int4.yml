@@ -7,6 +7,9 @@ resources:
   pipelines:
   - pipeline: rebaseMainUcx
     source: UCX test
+    trigger:
+      branches:
+        - avildema-patch-1
 
   containers:
     - container: centos7
