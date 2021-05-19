@@ -8,5 +8,10 @@ resources:
     source: 'UCX snapshot'
     trigger: true
 
+steps:
+  - script: echo Hello world
+    displayName: 'Run one-line script'
+
 extends:
-  template: azure-pipelines-pr.yml
+  template: main-pipeline.yml
+
