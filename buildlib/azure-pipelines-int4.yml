@@ -9,4 +9,4 @@ resources:
     trigger: true
 
 extends:
-  template: azure-pipeline-pr.yml
+  template: azure-pipelines-pr.yml
