@@ -1,0 +1,12 @@
+# See https://aka.ms/yaml
+# This pipeline to be run on PRs
+
+trigger: none
+
+stages:
+  - stage: test
+    jobs:
+      - job: test
+        steps:
+          - bash: |
+              echo "Hello world 2"
