@@ -57,9 +57,9 @@ stages:
         displayName: rebase from openucx/ucx@master
         steps:
           - bash: |
-            git remote add upstream git@github.com:openucx/ucx.git
-            git fetch upstream
-            git rebase upstream/master
-            git push origin avildema-patch-1 --force
+              git remote add upstream git@github.com:openucx/ucx.git
+              git fetch upstream
+              git rebase upstream/master
+              git push origin avildema-patch-1 --force
   - template: templates/main-stages.yml
 
