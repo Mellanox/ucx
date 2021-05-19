@@ -1,12 +1,9 @@
 # See https://aka.ms/yaml
 # This pipeline to be run on PRs
 
-trigger: none
+trigger:
+  - avildema-*
 
-stages:
-  - stage: test
-    jobs:
-      - job: test
-        steps:
-          - bash: |
-              echo "Hello world 2"
+steps:
+  - script: echo Hello world
+    displayName: 'Run one-line script'
