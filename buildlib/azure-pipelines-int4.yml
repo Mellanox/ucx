@@ -61,6 +61,6 @@ stages:
               git remote add upstream https://github.com/openucx/ucx.git
               git fetch upstream
               git rebase upstream/master
-              git push origin avildema-patch-1 --force
+              git push origin HEAD --force
   - template: main-pipeline.yml
 
