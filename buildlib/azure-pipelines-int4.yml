@@ -8,10 +8,5 @@ resources:
     source: 'UCX snapshot'
     trigger: true
 
-
-steps:
-  - script: echo Triggered by UCX PR
-    displayName: 'Run one-line script'
-
 extends:
   template: azure-pipeline-pr.yml
