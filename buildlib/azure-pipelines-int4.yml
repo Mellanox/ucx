@@ -6,7 +6,7 @@ trigger: none
 resources:
   pipelines:
   - pipeline: rebaseMainUcx
-    source: UCX snapshot
+    source: UCX test
 
   containers:
     - container: centos7
