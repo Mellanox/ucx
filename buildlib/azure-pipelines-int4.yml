@@ -1,10 +1,11 @@
 # See https://aka.ms/yaml
 
+trigger: none
+
 resources:
   pipelines:
-  - pipeline: rebaseMainUcx
-    source: 'UCX PR'
-    project: ucx
+  - pipeline: myTest
+    source: 'UCX test'
     trigger: true
 
 
