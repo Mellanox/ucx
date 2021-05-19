@@ -1,0 +1,31 @@
+# See https://aka.ms/yaml
+
+trigger: none
+pr: none
+
+resources:
+  pipelines:
+  - pipeline: myTest
+    source: 'UCX snapshot'
+    trigger: true
+
+stages:
+  - stage: Rebase
+    jobs:
+      - job: rebase
+        pool:
+          name: MLNX
+          demands:
+          - ucx_docker -equals yes
+        displayName: rebase on openucx/ucx@master
+        steps:
+          - checkout: self
+            clean: true
+          - bash: |
+              set -eEx
+              git remote set-url origin git@github.com:Mellanox/ucx.git
+              git checkout integration4
+              git remote add upstream https://github.com/openucx/ucx.git
+              git fetch upstream
+              git rebase upstream/master
+              git push origin HEAD --force
