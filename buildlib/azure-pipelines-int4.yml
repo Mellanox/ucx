@@ -19,4 +19,4 @@ stages:
       - job: rebase_master
         steps:
           - bash: |
-            echo "Hello world"
+              echo "Hello world"
