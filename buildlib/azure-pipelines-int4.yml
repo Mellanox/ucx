@@ -1,0 +1,22 @@
+# See https://aka.ms/yaml
+# This pipeline to be run on PRs
+
+trigger: none
+
+resources:
+  pipelines:
+  - pipeline: rebaseMainUcx
+    source: UCX snapshot
+
+  containers:
+    - container: centos7
+      image: rdmz-harbor.rdmz.labs.mlnx/ucx/centos7:2
+      options: -v /hpc/local:/hpc/local -v /auto/sw_tools:/auto/sw_tools
+
+stages:
+  - stage: Rebase
+    jobs:
+      - job: rebase_master
+        steps:
+          - bash: |
+            echo "Hello world"
