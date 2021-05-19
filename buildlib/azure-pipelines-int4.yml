@@ -54,6 +54,9 @@ stages:
   - stage: Rebase
     jobs:
       - job: rebase
+        pool:
+          name: MLNX
+          demands: ucx_docker -equals yes
         displayName: rebase from openucx/ucx@master
         steps:
           - bash: |
