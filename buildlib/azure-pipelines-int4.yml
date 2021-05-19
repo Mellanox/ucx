@@ -6,20 +6,10 @@ trigger: none
 resources:
   pipelines:
   - pipeline: rebaseMainUcx
-    source: UCX test
-    trigger:
-      branches:
-        - avildema-patch-1
+    source: 'UCX test'
+    trigger: true
 
-  containers:
-    - container: centos7
-      image: rdmz-harbor.rdmz.labs.mlnx/ucx/centos7:2
-      options: -v /hpc/local:/hpc/local -v /auto/sw_tools:/auto/sw_tools
 
-stages:
-  - stage: Rebase
-    jobs:
-      - job: rebase_master
-        steps:
-          - bash: |
-              echo "Hello world"
+steps:
+  - script: echo Triggered by UCX test
+    displayName: 'Run one-line script'
