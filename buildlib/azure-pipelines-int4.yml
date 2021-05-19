@@ -3,11 +3,11 @@
 resources:
   pipelines:
   - pipeline: rebaseMainUcx
-    source: 'UCX test'
-    project: UCX
+    source: 'UCX PR'
+    project: ucx
     trigger: true
 
 
 steps:
-  - script: echo Triggered by UCX test
+  - script: echo Triggered by UCX PR
     displayName: 'Run one-line script'
