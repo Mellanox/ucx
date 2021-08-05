@@ -109,6 +109,11 @@ ucs_log_default_handler(const char *file, unsigned line, const char *function,
     short_file = (short_file == NULL) ? file : short_file + 1;
     gettimeofday(&tv, NULL);
 
+    if (level == UCS_LOG_LEVEL_FATAL) {
+        ucs_fatal_error("Fatal", short_file, line, function, "Fatal: %s", buf);
+        return UCS_LOG_FUNC_RC_CONTINUE;
+    }
+
     if (level <= ucs_global_opts.log_level_trigger) {
         ucs_handle_error(ucs_log_level_names[level], "%13s:%-4u %s: %s",
                          short_file, line, ucs_log_level_names[level], buf);
