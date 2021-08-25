@@ -63,7 +63,8 @@ ucp_eager_offload_handler(void *arg, void *data, size_t length,
         if (!UCS_STATUS_IS_ERR(status)) {
             rdesc_hdr  = (ucp_tag_t*)(rdesc + 1);
             *rdesc_hdr = recv_tag;
-            ucp_tag_unexp_recv(&worker->tm, rdesc, recv_tag);
+            ucp_tag_unexp_recv(&worker->tm, rdesc, recv_tag,
+                               UCS_PTR_MAP_KEY_INVALID);
         }
     }
 
@@ -111,7 +112,9 @@ ucp_eager_tagged_handler(void *arg, void *data, size_t length, unsigned am_flags
 
             ucp_tag_request_process_recv_data(req, payload, recv_len, 0, 0,
                                               flags);
-            ucp_tag_frag_list_process_queue(&worker->tm, req, eagerf_hdr->msg_id
+            ucp_tag_frag_list_process_queue(&worker->tm, req,
+                                            eagerf_hdr->msg_id,
+                                            eagerf_hdr->super.ep_id
                                             UCS_STATS_ARG(UCP_WORKER_STAT_TAG_RX_EAGER_CHUNK_EXP));
         }
 
@@ -120,7 +123,7 @@ ucp_eager_tagged_handler(void *arg, void *data, size_t length, unsigned am_flags
         status = ucp_recv_desc_init(worker, data, length, 0, am_flags, hdr_len,
                                     flags, priv_length, 1, name, &rdesc);
         if (!UCS_STATUS_IS_ERR(status)) {
-            ucp_tag_unexp_recv(&worker->tm, rdesc, recv_tag);
+            ucp_tag_unexp_recv(&worker->tm, rdesc, recv_tag, eager_hdr->ep_id);
         }
     }
 
