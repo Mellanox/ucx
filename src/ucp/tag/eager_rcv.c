@@ -83,6 +83,7 @@ ucp_eager_tagged_handler(void *arg, void *data, size_t length, unsigned am_flags
     ucs_status_t status;
     ucp_tag_t recv_tag;
     size_t recv_len;
+    ucp_ep_h ep UCS_V_UNUSED;
 
     ucs_assert(length >= hdr_len);
     ucs_assert(flags & UCP_RECV_DESC_FLAG_EAGER);
@@ -118,6 +119,9 @@ ucp_eager_tagged_handler(void *arg, void *data, size_t length, unsigned am_flags
 
         status = UCS_OK;
     } else {
+        UCP_WORKER_GET_EP_BY_ID(&ep, worker, eager_hdr->ep_id, return UCS_OK,
+                                "eager");
+
         status = ucp_recv_desc_init(worker, data, length, 0, am_flags, hdr_len,
                                     flags, priv_length, 1, &rdesc);
         if (!UCS_STATUS_IS_ERR(status)) {

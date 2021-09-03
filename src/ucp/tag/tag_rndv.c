@@ -31,6 +31,57 @@ void ucp_tag_rndv_matched(ucp_worker_h worker, ucp_request_t *rreq,
     }
 }
 
+static void ucp_rndv_send_cancel_ack(ucp_worker_h worker,
+                                     ucp_rndv_rts_hdr_t *rndv_rts_hdr)
+{
+    ucp_ep_h ep;
+    ucp_request_t *req;
+
+    UCP_WORKER_GET_EP_BY_ID(&ep, worker, rndv_rts_hdr->sreq.ep_id, return,
+                            "ats_cancel");
+
+    req = ucp_request_get(worker);
+    if (req == NULL) {
+        return;
+    }
+
+    req->send.ep           = ep;
+    req->flags             = 0;
+    req->send.rndv.mdesc   = NULL;
+    req->send.pending_lane = UCP_NULL_LANE;
+
+    ucp_rndv_req_send_ack(req, NULL, rndv_rts_hdr->sreq.req_id,
+                          UCS_ERR_CANCELED, UCP_AM_ID_RNDV_ATS,
+                          "send_ats_cancel");
+}
+
+static void ucp_rndv_unexp_cancel(ucp_worker_h worker,
+                                  ucp_rndv_rts_hdr_t *rndv_rts_hdr)
+{
+    ucp_tag_hdr_t* tag_hdr = ucp_tag_hdr_from_rts(rndv_rts_hdr);
+    const ucp_rndv_rts_hdr_t *rdesc_rts_hdr;
+    ucp_recv_desc_t *rdesc;
+    ucs_list_link_t *list;
+
+    list = ucp_tag_unexp_get_list_for_tag(&worker->tm, tag_hdr->tag);
+    ucs_list_for_each(rdesc, list, tag_list[UCP_RDESC_HASH_LIST]) {
+        rdesc_rts_hdr = (const void*)(rdesc + 1);
+        if ((rdesc->flags & UCP_RECV_DESC_FLAG_RNDV) &&
+            (ucp_rdesc_get_tag(rdesc) == tag_hdr->tag) &&
+            (rdesc_rts_hdr->sreq.ep_id == rndv_rts_hdr->sreq.ep_id) &&
+            (rdesc_rts_hdr->sreq.req_id == rndv_rts_hdr->sreq.req_id))
+        {
+            ucs_trace_req("canceling unexp rdesc " UCP_RECV_DESC_FMT " with "
+                          "tag %"PRIx64, UCP_RECV_DESC_ARG(rdesc),
+                          ucp_rdesc_get_tag(rdesc));
+            ucp_tag_unexp_remove(rdesc);
+            ucp_rndv_send_cancel_ack(worker, rndv_rts_hdr);
+            ucp_recv_desc_release(rdesc);
+            return;
+        }
+    }
+}
+
 ucs_status_t ucp_tag_rndv_process_rts(ucp_worker_h worker,
                                       ucp_rndv_rts_hdr_t *rts_hdr,
                                       size_t length, unsigned tl_flags)
@@ -38,8 +89,13 @@ ucs_status_t ucp_tag_rndv_process_rts(ucp_worker_h worker,
     ucp_recv_desc_t *rdesc;
     ucp_request_t *rreq;
     ucs_status_t status;
+    ucp_ep_h ep UCS_V_UNUSED;
 
     ucs_assert(ucp_rndv_rts_is_tag(rts_hdr));
+
+    if (ucs_unlikely(rts_hdr->opcode == UCP_RNDV_RTS_TAG_CANCELED)) {
+        goto cancel;
+    }
 
     rreq = ucp_tag_exp_search(&worker->tm, ucp_tag_hdr_from_rts(rts_hdr)->tag);
     if (rreq != NULL) {
@@ -51,6 +107,9 @@ ucs_status_t ucp_tag_rndv_process_rts(ucp_worker_h worker,
         UCP_WORKER_STAT_RNDV(worker, EXP, 1);
         return UCS_OK;
     }
+
+    UCP_WORKER_GET_EP_BY_ID(&ep, worker, rts_hdr->sreq.ep_id, goto cancel,
+                            "rts");
 
     ucs_assert(length >= sizeof(*rts_hdr));
 
@@ -66,6 +125,9 @@ ucs_status_t ucp_tag_rndv_process_rts(ucp_worker_h worker,
     }
 
     return status;
+cancel:
+    ucp_rndv_unexp_cancel(worker, rts_hdr);
+    return UCS_OK;
 }
 
 size_t ucp_tag_rndv_rts_pack(void *dest, void *arg)
