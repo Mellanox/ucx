@@ -1453,6 +1453,8 @@ ucs_status_ptr_t ucp_ep_close_nbx(ucp_ep_h ep, const ucp_request_param_t *param)
     ucp_ep_update_flags(ep, UCP_EP_FLAG_CLOSED, 0);
 
     if (ucp_request_param_flags(param) & UCP_EP_CLOSE_FLAG_FORCE) {
+        ucp_tm_ep_cleanup(ep, ucp_ep_ext_control(ep)->local_ep_id,
+                          UCS_ERR_CANCELED);
         ucp_ep_discard_lanes(ep, UCS_ERR_CANCELED);
         ucp_ep_disconnected(ep, 1);
     } else {
