@@ -1,6 +1,7 @@
 # See https://aka.ms/yaml
 
 trigger: none
+pr: none
 
 resources:
   pipelines:
@@ -18,6 +19,8 @@ stages:
           - ucx_docker -equals yes
         displayName: rebase on openucx/ucx@master
         steps:
+          - checkout: self
+            clean: true
           - bash: |
               set -eEx
               git remote set-url origin git@github.com:Mellanox/ucx.git
