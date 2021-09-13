@@ -34,7 +34,7 @@ void ucp_tag_rndv_matched(ucp_worker_h worker, ucp_request_t *rreq,
 static void ucp_rndv_send_cancel_ack(ucp_worker_h worker,
                                      ucp_rndv_rts_hdr_t *rndv_rts_hdr)
 {
-    ucp_ep_h ep;
+    ucp_ep_h ep = NULL;
     ucp_request_t *req;
 
     UCP_WORKER_GET_EP_BY_ID(&ep, worker, rndv_rts_hdr->sreq.ep_id, return,
@@ -58,11 +58,11 @@ static void ucp_rndv_send_cancel_ack(ucp_worker_h worker,
 static void ucp_rndv_unexp_cancel(ucp_worker_h worker,
                                   ucp_rndv_rts_hdr_t *rndv_rts_hdr)
 {
-    ucp_tag_hdr_t* tag_hdr = ucp_tag_hdr_from_rts(rndv_rts_hdr);
+    ucp_tag_hdr_t* tag_hdr   = ucp_tag_hdr_from_rts(rndv_rts_hdr);
+    ucp_ep_h UCS_V_UNUSED ep = NULL;
     const ucp_rndv_rts_hdr_t *rdesc_rts_hdr;
     ucp_recv_desc_t *rdesc;
     ucs_list_link_t *list;
-    ucp_ep_h ep UCS_V_UNUSED;
 
     UCP_WORKER_GET_EP_BY_ID(&ep, worker, rndv_rts_hdr->sreq.ep_id,
                             ep = NULL, "unexp_cancel");
