@@ -33,6 +33,7 @@ protected:
                               ucp_md_map_t md_map);
 
     virtual void init() {
+        // coverity[unreachable]
         UCS_TEST_SKIP_R("PROTO_ENABLE is not supported");
         modify_config("PROTO_ENABLE", "y");
         ucp_test::init();
