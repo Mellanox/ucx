@@ -52,6 +52,7 @@ static size_t ucp_tag_pack_eager_sync_only_dt(void *dest, void *arg)
     ucp_request_t *req        = arg;
 
     hdr->super.super.tag = req->send.msg_proto.tag;
+    hdr->super.ep_id     =
     hdr->req.ep_id       = ucp_send_request_get_ep_remote_id(req);
     hdr->req.req_id      = ucp_send_request_get_id(req);
 
