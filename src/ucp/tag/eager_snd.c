@@ -259,6 +259,7 @@ static ucs_status_t ucp_tag_eager_sync_zcopy_single(uct_pending_req_t *self)
     ucp_eager_sync_hdr_t hdr;
 
     hdr.super.super.tag = req->send.msg_proto.tag;
+    hdr.super.ep_id     =
     hdr.req.ep_id       = ucp_send_request_get_ep_remote_id(req);
     hdr.req.req_id      = ucp_send_request_get_id(req);
 
