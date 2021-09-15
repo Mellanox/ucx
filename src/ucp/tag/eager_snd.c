@@ -83,6 +83,7 @@ static size_t ucp_tag_pack_eager_sync_first_dt(void *dest, void *arg)
 {
     ucp_eager_sync_first_hdr_t *hdr = dest;
     ucp_request_t *req              = arg;
+    ucs_ptr_map_key_t ep_id         = ucp_send_request_get_ep_remote_id(req);
     size_t length;
 
     ucs_assert(req->send.lane == ucp_ep_get_am_lane(req->send.ep));
@@ -92,8 +93,9 @@ static size_t ucp_tag_pack_eager_sync_first_dt(void *dest, void *arg)
                                  sizeof(*hdr);
     length                     = ucs_min(length, req->send.length);
     hdr->super.super.super.tag = req->send.msg_proto.tag;
+    hdr->super.super.ep_id     = ep_id;
     hdr->super.total_len       = req->send.length;
-    hdr->req.ep_id             = ucp_send_request_get_ep_remote_id(req);
+    hdr->req.ep_id             = ep_id;
     hdr->super.msg_id          = req->send.msg_proto.message_id;
     hdr->req.req_id            = ucp_send_request_get_id(req);
 
