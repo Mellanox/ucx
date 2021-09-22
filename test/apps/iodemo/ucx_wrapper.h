@@ -109,8 +109,10 @@ protected:
     };
 
 public:
+    static const size_t rndv_thresh_auto = (size_t)-2;
+
     UcxContext(size_t iomsg_size, double connect_timeout, bool use_am,
-               bool use_epoll = false);
+               size_t rndv_thresh, bool use_epoll = false);
 
     virtual ~UcxContext();
 
@@ -249,6 +251,11 @@ private:
 
     void destroy_worker();
 
+    size_t rndv_thresh() const
+    {
+        return _rndv_thresh;
+    }
+
     void set_am_handler(ucp_am_recv_callback_t cb, void *arg);
 
     ucp_context_h               _context;
@@ -265,6 +272,7 @@ private:
     bool                        _use_am;
     int                         _worker_fd;
     int                         _epoll_fd;
+    size_t                      _rndv_thresh;
 };
 
 
