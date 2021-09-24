@@ -1116,11 +1116,13 @@ static void ucp_tm_ep_cleanup(ucp_ep_h ep, ucs_ptr_map_key_t ep_id,
         if (!ucp_tag_frag_match_is_unexp(matchq)) {
             /* remove receive request from expected hash */
             rreq = matchq->exp_req;
-            if (rreq->recv.tag.ep_id == ep_id) {
-                ucs_debug("ep %p: completing expected receive request %p with status %s",
-                          ep, rreq, ucs_status_string(status));
-                ucp_request_complete_tag_recv(rreq, status);
+            if (rreq->recv.tag.ep_id != ep_id) {
+                continue;
             }
+
+            ucs_debug("ep %p: ep_id %"PRIuPTR" completing expected receive request %p with status %s",
+                      ep, ep_id, rreq, ucs_status_string(status));
+            ucp_request_complete_tag_recv(rreq, status);
         } else {
             /* remove receive fragments from unexpected matchq */
             rdesc = ucs_queue_head_elem_non_empty(&matchq->unexp_q, ucp_recv_desc_t,
