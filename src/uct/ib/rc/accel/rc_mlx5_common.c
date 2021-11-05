@@ -754,6 +754,11 @@ uct_rc_mlx5_iface_common_dm_tl_init(uct_mlx5_dm_data_t *data,
     uct_ib_mlx5dv_init_obj(&obj, MLX5DV_OBJ_DM);
     data->start_va = dvdm.buf;
 
+    ucs_info("if %p w %p %s: dm %p %p/%zu mr %p %p/%zu",
+             iface, iface->super.super.worker, uct_ib_device_name(data->device),
+             data->dm, data->start_va, dm_attr.length, data->mr, data->mr->addr,
+             data->mr->length);
+
     status = ucs_mpool_init(&data->mp, 0,
                             sizeof(uct_rc_iface_send_desc_t), 0, UCS_SYS_CACHE_LINE_SIZE,
                             data->seg_count, data->seg_count,
@@ -778,6 +783,8 @@ static void uct_rc_mlx5_iface_common_dm_tl_cleanup(uct_mlx5_dm_data_t *data)
 {
     ucs_assert(data->dm != NULL);
     ucs_assert(data->mr != NULL);
+
+    ucs_info("release dm %p", data->dm);
 
     ucs_mpool_cleanup(&data->mp, 1);
     ibv_dereg_mr(data->mr);
