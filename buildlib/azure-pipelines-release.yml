@@ -20,8 +20,6 @@ stages:
         artifact_name: ucx-${{ replace(variables['Build.SourceBranch'], 'refs/heads/', '') }}-centos7-mofed5.tar.bz2
       ${{ if eq(variables['Build.Reason'], 'IndividualCI') }}:
         artifact_name: ucx-${{ replace(variables['Build.SourceBranch'], 'refs/tags/', '') }}-centos7-mofed5.tar.bz2
-      ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
-        artifact_name: ucx-pr$(System.PullRequest.PullRequestNumber)-centos7-mofed5.tar.bz2
     jobs:
       - job: Release
         displayName: Create release
