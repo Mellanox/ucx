@@ -160,8 +160,8 @@ enum {
                                                            support CONNECT_TO_IFACE
                                                            mode only */
     UCP_EP_INIT_CREATE_AM_LANE_ONLY    = UCS_BIT(8),  /**< Endpoint requires an AM lane only */
-    UCP_EP_INIT_ALLOW_KA_AUX_TL        = UCS_BIT(9),  /**< Endpoint allows selecting of auxiliary
-                                                           transports for keepalive lane */
+    UCP_EP_INIT_KA_FROM_EXIST_LANES    = UCS_BIT(9),  /**< Use only existing lanes to create
+                                                           keepalive lane */
     UCP_EP_INIT_ALLOW_AM_AUX_TL        = UCS_BIT(10)  /**< Endpoint allows selecting of auxiliary
                                                            transports for AM lane */
 };
@@ -346,6 +346,9 @@ struct ucp_ep_config {
      * establishment protocols.
      */
     ucp_lane_map_t          p2p_lanes;
+
+    /* Flags which has to be used @ref uct_md_mkey_pack_v2 */
+    unsigned                uct_rkey_pack_flags;
 
     /* Configuration for each lane that provides RMA */
     ucp_ep_rma_config_t     rma[UCP_MAX_LANES];
@@ -770,19 +773,28 @@ ucp_ep_peer_mem_get(ucp_context_h context, ucp_ep_h ep, uint64_t address,
                     size_t size, void *rkey_buf, ucp_md_index_t md_index);
 
 /**
- * @brief Do keepalive operation for a specific UCT EP.
+ * @brief Indicates AM-based keepalive necessity.
+ * 
+ * @param [in] ep      UCP endpoint to check.
+ * @param [in] rsc_idx Resource index to check.
+ * @param [in] is_p2p  Flag that indicates whether UCT EP was created as p2p
+ *                     (i.e. CONNECT_TO_EP) or not.
+ *
+ * @return Whether AM-based keepalive is required or not.
+ */
+int ucp_ep_is_am_keepalive(ucp_ep_h ep, ucp_rsc_index_t rsc_idx, int is_p2p);
+
+/**
+ * @brief Do AM-based keepalive operation for a specific UCT EP.
  *
  * @param [in] ucp_ep  UCP Endpoint object to operate keepalive.
  * @param [in] uct_ep  UCT Endpoint object to do keepalive on.
  * @param [in] rsc_idx Resource index to check.
- * @param [in] flags   Flags for keepalive operation.
- * @param [in] comp    Pointer to keepalive completion object.
  *
  * @return Status of keepalive operation.
  */
-ucs_status_t ucp_ep_do_uct_ep_keepalive(ucp_ep_h ucp_ep, uct_ep_h uct_ep,
-                                        ucp_rsc_index_t rsc_idx, unsigned flags,
-                                        uct_completion_t *comp);
+ucs_status_t ucp_ep_do_uct_ep_am_keepalive(ucp_ep_h ucp_ep, uct_ep_h uct_ep,
+                                           ucp_rsc_index_t rsc_idx);
 
 
 /**

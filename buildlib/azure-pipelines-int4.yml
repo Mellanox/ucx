@@ -11,13 +11,16 @@ resources:
 
 stages:
   - stage: Rebase
+    variables:
+      rebase_branch: v1.13.x
+
     jobs:
       - job: rebase
         pool:
           name: MLNX
           demands:
           - ucx_docker -equals yes
-        displayName: rebase on openucx/ucx@master
+        displayName: rebase on openucx/ucx
         steps:
           - checkout: self
             clean: true
@@ -29,12 +32,12 @@ stages:
               git remote set-url origin git@github.com:Mellanox/ucx.git
               git fetch origin integration4
               git checkout integration4
-              # Checkout master branch from openucx/ucx
+              # Checkout $(rebase_branch) branch from openucx/ucx
               git remote add upstream https://github.com/openucx/ucx.git
-              git fetch upstream master
-              git log --oneline -10 upstream/master
-              # Rebase integration4 branch on master branch
-              if ! git rebase upstream/master
+              git fetch upstream $(rebase_branch)
+              git log --oneline -10 upstream/$(rebase_branch)
+              # Rebase integration4 branch on $(rebase_branch) branch
+              if ! git rebase upstream/$(rebase_branch)
               then
                   # Automatic rebase failed - show merge conflicts
                   git status

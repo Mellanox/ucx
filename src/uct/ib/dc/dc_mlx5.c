@@ -1149,6 +1149,16 @@ ucs_status_t uct_dc_mlx5_iface_fc_grant(uct_pending_req_t *self)
     return status;
 }
 
+void uct_dc_mlx5_fc_entry_iter_del(uct_dc_mlx5_iface_t *iface, khiter_t it)
+{
+    kh_del(uct_dc_mlx5_fc_hash, &iface->tx.fc_hash, it);
+    if (kh_size(&iface->tx.fc_hash) == 0) {
+        uct_worker_progress_unregister_safe(
+                &iface->super.super.super.super.worker->super,
+                &iface->tx.fc_hard_req_progress_cb_id);
+    }
+}
+
 ucs_status_t uct_dc_mlx5_iface_fc_handler(uct_rc_iface_t *rc_iface, unsigned qp_num,
                                           uct_rc_hdr_t *hdr, unsigned length,
                                           uint32_t imm_data, uint16_t lid, unsigned flags)
@@ -1209,8 +1219,8 @@ ucs_status_t uct_dc_mlx5_iface_fc_handler(uct_rc_iface_t *rc_iface, unsigned qp_
         /* Peer granted resources, so update wnd */
         uct_rc_fc_restore_wnd(rc_iface, &ep->fc);
 
-        /* Remove entry for flush to complete */
-        kh_del(uct_dc_mlx5_fc_hash, &iface->tx.fc_hash, it);
+        /* Remove FC entry to complete */
+        uct_dc_mlx5_fc_entry_iter_del(iface, it);
 
         UCS_STATS_UPDATE_COUNTER(ep->fc.stats, UCT_RC_FC_STAT_RX_PURE_GRANT, 1);
 
@@ -1408,6 +1418,8 @@ static UCS_CLASS_INIT_FUNC(uct_dc_mlx5_iface_t, uct_md_h tl_md, uct_worker_h wor
     self->tx.policy                        = (uct_dc_tx_policy_t)config->tx_policy;
     self->tx.fc_seq                        = 0;
     self->tx.fc_hard_req_timeout           = config->fc_hard_req_timeout;
+    self->tx.fc_hard_req_resend_time       = ucs_get_time();
+    self->tx.fc_hard_req_progress_cb_id    = UCS_CALLBACKQ_ID_NULL;
     self->tx.dci_release_prog_id           = UCS_CALLBACKQ_ID_NULL;
     self->keepalive_dci                    = -1;
     self->tx.num_dci_pools                 = 1;
@@ -1515,6 +1527,10 @@ uct_dc_mlx5_query_tl_devices(uct_md_h md, uct_tl_device_resource_t **tl_devices_
 {
     uct_ib_md_t *ib_md = ucs_derived_of(md, uct_ib_md_t);
     int flags;
+
+    if (strcmp(ib_md->name, UCT_IB_MD_NAME(mlx5))) {
+        return UCS_ERR_NO_DEVICE;
+    }
 
     flags = UCT_IB_DEVICE_FLAG_MLX5_PRM | UCT_IB_DEVICE_FLAG_DC |
             (ib_md->config.eth_pause ? 0 : UCT_IB_DEVICE_FLAG_LINK_IB);
@@ -1647,13 +1663,11 @@ void uct_dc_mlx5_iface_set_ep_failed(uct_dc_mlx5_iface_t *iface,
     uct_ib_iface_t *ib_iface = &iface->super.super.super;
     ucs_status_t status;
     ucs_log_level_t log_lvl;
-    ucs_arbiter_t *waitq;
-    ucs_arbiter_group_t *group;
-    uint8_t pool_index;
 
-    uct_dc_mlx5_get_arbiter_params(iface, ep, &waitq, &group, &pool_index);
-    ucs_arbiter_group_purge(waitq, group,
-                            uct_dc_mlx5_ep_arbiter_purge_internal_cb, ep);
+    /* We don't purge an endpoint's pending queue, because only a FC endpoint
+     * could have internal TX operations scheduled there which shouldn't be
+     * purged - they need to be rescheduled when DCI will be recovered after an
+     * error */
 
     if (ep->flags & (UCT_DC_MLX5_EP_FLAG_ERR_HANDLER_INVOKED |
                      UCT_DC_MLX5_EP_FLAG_FLUSH_CANCEL)) {

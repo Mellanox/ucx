@@ -669,17 +669,6 @@ uct_ud_mlx5_iface_peer_address_str(const uct_ud_iface_t *iface,
 }
 
 static ucs_status_t
-uct_ud_mlx5_ep_create(const uct_ep_params_t* params, uct_ep_h *ep_p)
-{
-    if (ucs_test_all_flags(params->field_mask, UCT_EP_PARAM_FIELD_DEV_ADDR |
-                                               UCT_EP_PARAM_FIELD_IFACE_ADDR)) {
-        return uct_ud_ep_create_connected_common(params, ep_p);
-    }
-
-    return uct_ud_mlx5_ep_t_new(params, ep_p);
-}
-
-static ucs_status_t
 uct_ud_mlx5_create_cq(uct_ib_iface_t *iface, uct_ib_dir_t dir,
                       const uct_ib_iface_config_t *ib_config,
                       const uct_ib_iface_init_attr_t *init_attr,
@@ -794,6 +783,7 @@ static uct_ud_iface_ops_t uct_ud_mlx5_iface_ops = {
     },
     .async_progress          = uct_ud_mlx5_iface_async_progress,
     .send_ctl                = uct_ud_mlx5_ep_send_ctl,
+    .ep_new                  = uct_ud_mlx5_ep_t_new,
     .ep_free                 = UCS_CLASS_DELETE_FUNC_NAME(uct_ud_mlx5_ep_t),
     .create_qp               = uct_ud_mlx5_iface_create_qp,
     .destroy_qp              = uct_ud_mlx5_iface_destroy_qp,
@@ -814,7 +804,7 @@ static uct_iface_ops_t uct_ud_mlx5_iface_tl_ops = {
     .ep_flush                 = uct_ud_ep_flush,
     .ep_fence                 = uct_base_ep_fence,
     .ep_check                 = uct_ud_ep_check,
-    .ep_create                = uct_ud_mlx5_ep_create,
+    .ep_create                = uct_ud_ep_create,
     .ep_destroy               = uct_ud_ep_disconnect,
     .ep_get_address           = uct_ud_ep_get_address,
     .ep_connect_to_ep         = uct_ud_ep_connect_to_ep,
@@ -926,6 +916,11 @@ uct_ud_mlx5_query_tl_devices(uct_md_h md,
                              unsigned *num_tl_devices_p)
 {
     uct_ib_md_t *ib_md = ucs_derived_of(md, uct_ib_md_t);
+
+    if (strcmp(ib_md->name, UCT_IB_MD_NAME(mlx5))) {
+        return UCS_ERR_NO_DEVICE;
+    }
+
     return uct_ib_device_query_ports(&ib_md->dev, UCT_IB_DEVICE_FLAG_MLX5_PRM,
                                      tl_devices_p, num_tl_devices_p);
 }

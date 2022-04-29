@@ -57,6 +57,10 @@ ucs_config_field_t uct_md_config_rcache_table[] = {
      ucs_offsetof(uct_md_rcache_config_t, max_unreleased),
      UCS_CONFIG_TYPE_MEMUNITS},
 
+    {"RCACHE_PURGE_ON_FORK", "y",
+     "Purge registration cache upon fork",
+     ucs_offsetof(uct_md_rcache_config_t, purge_on_fork), UCS_CONFIG_TYPE_BOOL},
+
     {NULL}
 };
 
@@ -334,10 +338,14 @@ ucs_status_t uct_md_mkey_pack_v2(uct_md_h md, uct_mem_h memh,
                                  const uct_md_mkey_pack_params_t *params,
                                  void *rkey_buffer)
 {
-    ucs_status_t status = uct_md_mkey_pack_params_check(md, memh, rkey_buffer);
+    ucs_status_t status;
 
-    return (status == UCS_OK) ?
-           md->ops->mkey_pack(md, memh, params, rkey_buffer) : status;
+    status = uct_md_mkey_pack_params_check(md, memh, rkey_buffer);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    return md->ops->mkey_pack(md, memh, params, rkey_buffer);
 }
 
 ucs_status_t uct_md_mkey_pack(uct_md_h md, uct_mem_h memh, void *rkey_buffer)
@@ -519,6 +527,8 @@ void uct_md_set_rcache_params(ucs_rcache_params_t *rcache_params,
     rcache_params->max_regions        = rcache_config->max_regions;
     rcache_params->max_size           = rcache_config->max_size;
     rcache_params->max_unreleased     = rcache_config->max_unreleased;
+    rcache_params->flags              = !rcache_config->purge_on_fork ? 0 :
+                                        UCS_RCACHE_FLAG_PURGE_ON_FORK;
 }
 
 double uct_md_rcache_overhead(const uct_md_rcache_config_t *rcache_config)

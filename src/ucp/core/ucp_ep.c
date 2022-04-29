@@ -650,8 +650,7 @@ ucs_status_t ucp_worker_mem_type_eps_create(ucp_worker_h worker)
         status = ucp_ep_create_to_worker_addr(worker, &ucp_tl_bitmap_max,
                                               &local_address,
                                               UCP_EP_INIT_FLAG_MEM_TYPE |
-                                              UCP_EP_INIT_FLAG_INTERNAL |
-                                              UCP_EP_INIT_ALLOW_KA_AUX_TL,
+                                              UCP_EP_INIT_FLAG_INTERNAL,
                                               ep_name,
                                               &worker->mem_type_ep[mem_type]);
         if (status != UCS_OK) {
@@ -972,8 +971,8 @@ static ucs_status_t
 ucp_ep_create_api_to_worker_addr(ucp_worker_h worker,
                                  const ucp_ep_params_t *params, ucp_ep_h *ep_p)
 {
-    unsigned ep_init_flags = ucp_ep_init_flags(worker, params) |
-                             UCP_EP_INIT_ALLOW_KA_AUX_TL;
+    ucp_context_h context  = worker->context;
+    unsigned ep_init_flags = ucp_ep_init_flags(worker, params);
     ucp_unpacked_address_t remote_address;
     ucp_ep_match_conn_sn_t conn_sn;
     ucs_status_t status;
@@ -1047,7 +1046,7 @@ ucp_ep_create_api_to_worker_addr(ucp_worker_h worker,
         ucp_ep_update_remote_id(ep, ucp_ep_local_id(ep));
     } else if (!ucp_ep_match_insert(worker, ep, remote_address.uuid, conn_sn,
                                     UCS_CONN_MATCH_QUEUE_EXP)) {
-        if (worker->context->config.features & UCP_FEATURE_STREAM) {
+        if (context->config.features & UCP_FEATURE_STREAM) {
             status = UCS_ERR_EXCEEDS_LIMIT;
             ucs_error("worker %p: failed to create the endpoint without"
                       "connection matching and Stream API support", worker);
@@ -1067,8 +1066,12 @@ ucp_ep_create_api_to_worker_addr(ucp_worker_h worker,
     status = UCS_OK;
 
 out_resolve_remote_id:
-    if (ep_init_flags & UCP_EP_INIT_ERR_MODE_PEER_FAILURE) {
-        /* If PEER_FAILURE was requested, resolve remote endpoint ID prior to
+    if ((context->config.ext.resolve_remote_ep_id == UCS_CONFIG_ON) ||
+        ((context->config.ext.resolve_remote_ep_id == UCS_CONFIG_AUTO) &&
+         (ep_init_flags & UCP_EP_INIT_ERR_MODE_PEER_FAILURE) &&
+         ucp_worker_keepalive_is_enabled(worker))) {
+        /* If resolving remote ID forced by configuration or PEER_FAILURE
+         * and keepalive were requested, resolve remote endpoint ID prior to
          * communicating with a peer to make sure that remote peer's endpoint
          * won't be changed during runtime */
         status = ucp_ep_resolve_remote_id(ep, ep->am_lane);
@@ -2461,6 +2464,7 @@ ucs_status_t ucp_ep_config_init(ucp_worker_h worker, ucp_ep_config_t *config,
     config->tag.eager.zcopy_auto_thresh = 0;
     config->am.zcopy_auto_thresh        = 0;
     config->p2p_lanes                   = 0;
+    config->uct_rkey_pack_flags         = 0;
     if (context->config.ext.bcopy_thresh == UCS_MEMUNITS_AUTO) {
         config->bcopy_thresh = 0;
     } else {
@@ -2504,6 +2508,8 @@ ucs_status_t ucp_ep_config_init(ucp_worker_h worker, ucp_ep_config_t *config,
             config->md_index[lane] = context->tl_rscs[rsc_index].md_index;
             if (ucp_ep_config_connect_p2p(worker, &config->key, rsc_index)) {
                 config->p2p_lanes |= UCS_BIT(lane);
+            } else if (config->key.err_mode == UCP_ERR_HANDLING_MODE_PEER) {
+                config->uct_rkey_pack_flags |= UCT_MD_MKEY_PACK_FLAG_INVALIDATE;
             }
         } else {
             config->md_index[lane] = UCP_NULL_RESOURCE;
@@ -3349,27 +3355,21 @@ void ucp_ep_invoke_err_cb(ucp_ep_h ep, ucs_status_t status)
     ucp_ep_ext_control(ep)->err_cb(ucp_ep_ext_gen(ep)->user_data, ep, status);
 }
 
-static UCS_F_ALWAYS_INLINE int
-ucp_ep_is_am_keepalive(ucp_ep_h ep, ucp_rsc_index_t rsc_idx)
+int ucp_ep_is_am_keepalive(ucp_ep_h ep, ucp_rsc_index_t rsc_index, int is_p2p)
 {
-    ucp_worker_iface_t *wiface;
-
-    if (!(ep->flags & UCP_EP_FLAG_REMOTE_ID) ||
-        (rsc_idx == UCP_NULL_RESOURCE)) {
-        /* if remote ID isn't defined or rsc index is NULL (i.e. it is CM lane),
-         * don't do AM keepalive */
-        return 0;
-    }
-
-    wiface = ucp_worker_iface(ep->worker, rsc_idx);
-    return ucs_test_all_flags(wiface->attr.cap.flags,
-                              UCT_IFACE_FLAG_CONNECT_TO_IFACE |
-                              UCT_IFACE_FLAG_AM_BCOPY);
+    return /* Not a CM lane */
+            (rsc_index != UCP_NULL_RESOURCE) &&
+            /* Have a remote endpoint ID to send in the keepalive active message */
+            (ep->flags & UCP_EP_FLAG_REMOTE_ID) &&
+            /* Transport is not connected as point-to-point */
+            !is_p2p &&
+            /* Transport supports active messages */
+            (ucp_worker_iface(ep->worker, rsc_index)->flags &
+             UCT_IFACE_FLAG_AM_BCOPY);
 }
 
-ucs_status_t ucp_ep_do_uct_ep_keepalive(ucp_ep_h ucp_ep, uct_ep_h uct_ep,
-                                        ucp_rsc_index_t rsc_idx, unsigned flags,
-                                        uct_completion_t *comp)
+ucs_status_t ucp_ep_do_uct_ep_am_keepalive(ucp_ep_h ucp_ep, uct_ep_h uct_ep,
+                                           ucp_rsc_index_t rsc_idx)
 {
     ucp_tl_bitmap_t tl_bitmap = UCS_BITMAP_ZERO;
     ucs_status_t status;
@@ -3378,10 +3378,6 @@ ucs_status_t ucp_ep_do_uct_ep_keepalive(ucp_ep_h ucp_ep, uct_ep_h uct_ep,
     ucp_wireup_msg_t wireup_msg;
 
     ucs_assert(!(ucp_ep->flags & UCP_EP_FLAG_FAILED));
-
-    if (!ucp_ep_is_am_keepalive(ucp_ep, rsc_idx)) {
-        return uct_ep_check(uct_ep, flags, comp);
-    }
 
     UCS_BITMAP_SET(tl_bitmap, rsc_idx);
 

@@ -119,6 +119,9 @@ typedef struct ucp_context_config {
     /** Maximal number of endpoints to check on every keepalive round
      * (0 - disabled, inf - check all endpoints on every round) */
     unsigned                               keepalive_num_eps;
+    /** Defines whether resolving remote endpoint ID is required or not when
+     *  creating a local endpoint */
+    ucs_on_off_auto_value_t                resolve_remote_ep_id;
     /** Enable indirect IDs to object pointers in wire protocols */
     ucs_on_off_auto_value_t                proto_indirect_id;
     /** Bitmap of memory types whose allocations are registered fully */
@@ -211,10 +214,30 @@ typedef struct ucp_tl_cmpt {
  * Memory domain.
  */
 typedef struct ucp_tl_md {
-    uct_md_h                      md;         /* Memory domain handle */
-    ucp_rsc_index_t               cmpt_index; /* Index of owning component */
-    uct_md_resource_desc_t        rsc;        /* Memory domain resource */
-    uct_md_attr_t                 attr;       /* Memory domain attributes */
+    /**
+     * Memory domain handle
+     */
+    uct_md_h               md;
+
+    /**
+     * Index of owning component
+     */
+    ucp_rsc_index_t        cmpt_index;
+
+    /**
+     * Memory domain resource
+     */
+    uct_md_resource_desc_t rsc;
+
+    /**
+     * Memory domain attributes
+     */
+    uct_md_attr_t          attr;
+
+    /**
+     * Flags mask parameter for @ref uct_md_mkey_pack_v2
+     */
+    unsigned               pack_flags_mask;
 } ucp_tl_md_t;
 
 

@@ -114,7 +114,7 @@ UcxContext::UcxContext(size_t iomsg_size, double connect_timeout, bool use_am,
                        size_t rndv_thresh, bool use_epoll) :
     _context(NULL), _worker(NULL), _listener(NULL), _iomsg_recv_request(NULL),
     _iomsg_buffer(iomsg_size), _connect_timeout(connect_timeout),
-    _use_am(use_am), _worker_fd(-1), _epoll_fd(-1)
+    _use_am(use_am), _worker_fd(-1), _epoll_fd(-1), _rndv_thresh(rndv_thresh)
 {
     if (use_epoll) {
         _epoll_fd = epoll_create(1);
