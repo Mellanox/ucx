@@ -1,6 +1,6 @@
 /**
  * Copyright (c) UT-Battelle, LLC. 2014-2015. ALL RIGHTS RESERVED.
- * Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+* Copyright (c) 2001-2015. NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * Copyright (c) Los Alamos National Security, LLC. 2016.  ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */

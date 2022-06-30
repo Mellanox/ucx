@@ -1,7 +1,7 @@
 /**
  * @file        status.h
  * @date        2014-2019
- * @copyright   Mellanox Technologies Ltd. All rights reserved.
+* Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * @copyright   The University of Tennessee and the University of Tennessee research foundation. All rights reserved.
  * @brief       Unified Communication Services
  */

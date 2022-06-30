@@ -1,5 +1,5 @@
 /**
-* Copyright (C) NVIDIA Corporation. 2019.  ALL RIGHTS RESERVED.
+* Copyright (c) 2019. NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
 * See file LICENSE for terms.
 */

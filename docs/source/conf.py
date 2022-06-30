@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# Copyright (C) Mellanox Technologies Ltd. 2019.  ALL RIGHTS RESERVED.
+# Copyright (c) 2019. NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # Copyright (C) Arm Ltd. 2021.  ALL RIGHTS RESERVED.
 #
 # See file LICENSE for terms.

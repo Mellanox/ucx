@@ -1,7 +1,7 @@
 /**
  * @file        uct_v2.h
  * @date        2021
- * @copyright   Mellanox Technologies Ltd. All rights reserved.
+* Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * @brief       Unified Communication Transport
  */
 

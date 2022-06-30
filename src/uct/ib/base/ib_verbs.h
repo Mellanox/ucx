@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) 2001-2014. NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 * Copyright (C) UT-Battelle, LLC. 2014. ALL RIGHTS RESERVED.
 * Copyright (C) 2021 Broadcom. ALL RIGHTS RESERVED. The term “Broadcom”
 * refers to Broadcom Inc. and/or its subsidiaries.

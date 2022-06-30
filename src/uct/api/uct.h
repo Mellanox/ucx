@@ -1,8 +1,7 @@
 /**
  * @file        uct.h
  * @date        2014-2020
- * @copyright   NVIDIA Corporation. All rights reserved.
- * @copyright   Mellanox Technologies Ltd. All rights reserved.
+ * @copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * @copyright   Oak Ridge National Laboratory. All rights received.
  * @copyright   Advanced Micro Devices, Inc. All rights received.
  * @brief       Unified Communication Transport
