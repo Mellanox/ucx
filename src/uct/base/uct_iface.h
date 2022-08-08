@@ -885,7 +885,7 @@ static inline ucs_status_t uct_iface_invoke_am(uct_base_iface_t *iface,
     ucs_assertv((status == UCS_OK) ||
                 ((status == UCS_INPROGRESS) && (flags &
                                                 UCT_CB_PARAM_FLAG_DESC)),
-                "%s(arg=%p data=%p length=%u flags=0x%x) returned %s",
+                "%s(arg=%p msg_hdr=%p length=%u flags=0x%x) returned %s",
                 ucs_debug_get_symbol_name((void*)handler->cb), handler->arg,
                 msg_hdr, length, flags, ucs_status_string(status));
     return status;
