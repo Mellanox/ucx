@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2020.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -47,8 +47,7 @@ BEGIN_C_DECLS
                                           _index_type min_capacity); \
     \
     _scope ucs_status_t \
-    UCS_ARRAY_IDENTIFIER(_name, _append)(ucs_array_t(_name) *array, \
-                                         _index_type *index_p)
+    UCS_ARRAY_IDENTIFIER(_name, _append)(ucs_array_t(_name) *array);
 
 
 /**
@@ -199,15 +198,39 @@ BEGIN_C_DECLS
 
 
 /*
- * Add an element to the end of the array and return its index.
+ * Add an element to the end of the array.
+ *
+ * @param _name            Array name
+ * @param _array           Array to add element to
+ * @param _failed_actions  Actions to perform if the append operation failed
+ *
+ * @return If successful returns a pointer to the added element, otherwise NULL.
+ */
+#define ucs_array_append(_name, _array, _failed_actions) \
+    ({ \
+        ucs_status_t __status = UCS_ARRAY_IDENTIFIER(_name, _append)(_array); \
+        UCS_ARRAY_IDENTIFIER(_name, _value_type_t) * __elem; \
+        \
+        if (__status != UCS_OK) { \
+            _failed_actions; \
+            __elem = NULL; \
+        } else { \
+            __elem = ucs_array_last(_array); \
+        } \
+        \
+        __elem; \
+    })
+
+
+/**
+ * Add an element to the end of the array assuming it has enough space.
  *
  * @param _name     Array name
  * @param _array    Array to add element to
- *
- * @return UCS_OK if added, UCS_ERR_NO_MEMORY if cannot grow the array
  */
-#define ucs_array_append(_name, _array) \
-   UCS_ARRAY_IDENTIFIER(_name, _append)(_array)
+#define ucs_array_append_fixed(_name, _array) \
+    ucs_array_append(_name, _array, \
+                     ucs_fatal("failed to grow array %s", #_name))
 
 
 /**
@@ -261,7 +284,10 @@ BEGIN_C_DECLS
  * @return Pointer to last array element
  */
 #define ucs_array_last(_array) \
-    ((_array)->buffer + ucs_array_length(_array) - 1)
+    ({ \
+        ucs_assert(ucs_array_length(_array) > 0); \
+        (_array)->buffer + ucs_array_length(_array) - 1; \
+    })
 
 
 /**
@@ -295,13 +321,40 @@ BEGIN_C_DECLS
 
 
 /**
+ * Remove the last element in the array (decrease length by 1)
+ *
+ * @param _array    Array from which to remove the last element
+ */
+#define ucs_array_pop_back(_array) \
+    ({ \
+        ucs_assert(ucs_array_length(_array) > 0); \
+        --(_array)->length; \
+    })
+
+
+/**
+ * Extract array contents and reset the array
+ */
+#define ucs_array_extract_buffer(_name, _array) \
+    ({ \
+        UCS_ARRAY_IDENTIFIER(_name, _value_type_t) *buffer = (_array)->buffer; \
+        ucs_assert(!ucs_array_is_fixed(_array)); \
+        (_array)->buffer   = NULL; \
+        (_array)->length   = 0; \
+        (_array)->capacity = 0; \
+        buffer; \
+    })
+
+
+/**
  * Iterate over array elements
  *
  * @param _elem    Pointer variable to the current array element
  * @param _array   Array to iterate over
  */
 #define ucs_array_for_each(_elem, _array) \
-    for (_elem = ucs_array_begin(_array); _elem < ucs_array_end(_array); ++_elem)
+    ucs_carray_for_each(_elem, ucs_array_begin(_array), \
+                        ucs_array_length(_array))
 
 
 /* Internal flag to distinguish between fixed/dynamic array */

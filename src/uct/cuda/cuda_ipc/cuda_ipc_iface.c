@@ -1,6 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2018-2019.  ALL RIGHTS RESERVED.
- * Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2018-2019. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -18,6 +17,7 @@
 #include <ucs/debug/assert.h>
 #include <sys/eventfd.h>
 #include <pthread.h>
+#include <nvml.h>
 
 static ucs_config_field_t uct_cuda_ipc_iface_config_table[] = {
 
@@ -38,6 +38,11 @@ static ucs_config_field_t uct_cuda_ipc_iface_config_table[] = {
      ucs_offsetof(uct_cuda_ipc_iface_config_t, enable_cache),
      UCS_CONFIG_TYPE_BOOL},
 
+    {"ENABLE_GET_ZCOPY", "auto",
+     "Enable get operations except for platforms known to have slower performance",
+     ucs_offsetof(uct_cuda_ipc_iface_config_t, enable_get_zcopy),
+     UCS_CONFIG_TYPE_ON_OFF_AUTO},
+
     {"MAX_EVENTS", "inf",
      "Max number of cuda events. -1 is infinite",
      ucs_offsetof(uct_cuda_ipc_iface_config_t, max_cuda_ipc_events), UCS_CONFIG_TYPE_UINT},
@@ -50,18 +55,10 @@ static ucs_config_field_t uct_cuda_ipc_iface_config_table[] = {
 static void UCS_CLASS_DELETE_FUNC_NAME(uct_cuda_ipc_iface_t)(uct_iface_t*);
 
 
-static uint64_t uct_cuda_ipc_iface_node_guid(uct_base_iface_t *iface)
-{
-    return ucs_machine_guid() *
-           ucs_string_to_id(iface->md->component->name);
-}
-
 ucs_status_t uct_cuda_ipc_iface_get_device_address(uct_iface_t *tl_iface,
                                                    uct_device_addr_t *addr)
 {
-    uct_base_iface_t *iface = ucs_derived_of(tl_iface, uct_base_iface_t);
-
-    *(uint64_t*)addr = uct_cuda_ipc_iface_node_guid(iface);
+    *(uint64_t*)addr = ucs_get_system_id();
     return UCS_OK;
 }
 
@@ -76,10 +73,8 @@ static int uct_cuda_ipc_iface_is_reachable(const uct_iface_h tl_iface,
                                            const uct_device_addr_t *dev_addr,
                                            const uct_iface_addr_t *iface_addr)
 {
-    uct_cuda_ipc_iface_t  *iface = ucs_derived_of(tl_iface, uct_cuda_ipc_iface_t);
-
-    return ((uct_cuda_ipc_iface_node_guid(&iface->super) ==
-             *((const uint64_t *)dev_addr)) && ((getpid() != *(pid_t *)iface_addr)));
+    return (ucs_get_system_id() == *((const uint64_t*)dev_addr)) &&
+           (getpid() != *(pid_t*)iface_addr);
 }
 
 static double uct_cuda_ipc_iface_get_bw()
@@ -116,6 +111,75 @@ static double uct_cuda_ipc_iface_get_bw()
     }
 }
 
+/* calls nvmlInit_v2 and nvmlShutdown which are expensive but
+ * get_device_nvlinks should be outside critical path */
+static int uct_cuda_ipc_get_device_nvlinks(int ordinal)
+{
+    static int num_nvlinks = -1;
+    unsigned link;
+    nvmlDevice_t device;
+    nvmlFieldValue_t value;
+    nvmlPciInfo_t pci;
+    ucs_status_t status;
+
+    if (num_nvlinks != -1) {
+        return num_nvlinks;
+    }
+
+    status = UCT_NVML_FUNC_LOG_ERR(nvmlInit_v2());
+    if (status != UCS_OK) {
+        goto err;
+    }
+
+    status = UCT_NVML_FUNC_LOG_ERR(nvmlDeviceGetHandleByIndex(ordinal, &device));
+    if (status != UCS_OK) {
+        goto err_sd;
+    }
+
+    value.fieldId = NVML_FI_DEV_NVLINK_LINK_COUNT;
+
+    UCT_NVML_FUNC_LOG_ERR(nvmlDeviceGetFieldValues(device, 1, &value));
+
+    num_nvlinks = ((value.nvmlReturn == NVML_SUCCESS) &&
+                   (value.valueType == NVML_VALUE_TYPE_UNSIGNED_INT)) ?
+                  value.value.uiVal : 0;
+
+    /* not enough to check number of nvlinks; need to check if links are active
+     * by seeing if remote info can be obtained */
+    for (link = 0; link < num_nvlinks; ++link) {
+        status = UCT_NVML_FUNC(nvmlDeviceGetNvLinkRemotePciInfo(device, link,
+                                                                &pci),
+                               UCS_LOG_LEVEL_DEBUG);
+        if (status != UCS_OK) {
+            ucs_debug("could not find remote end info for link %u", link);
+            goto err_sd;
+        }
+    }
+
+    UCT_NVML_FUNC_LOG_ERR(nvmlShutdown());
+    return num_nvlinks;
+
+err_sd:
+    UCT_NVML_FUNC_LOG_ERR(nvmlShutdown());
+err:
+    return 0;
+}
+
+static size_t uct_cuda_ipc_iface_get_max_get_zcopy(uct_cuda_ipc_iface_t *iface)
+{
+    int num_nvlinks;
+
+    /* assume there is at least >= 1 GPUs on the system; assume uniformity */
+    num_nvlinks = uct_cuda_ipc_get_device_nvlinks(0);
+
+    if (!num_nvlinks && (iface->config.enable_get_zcopy != UCS_CONFIG_ON)) {
+        ucs_debug("cuda-ipc get zcopy disabled as no nvlinks detected");
+        return 0;
+    }
+
+    return ULONG_MAX;
+}
+
 static ucs_status_t uct_cuda_ipc_iface_query(uct_iface_h tl_iface,
                                              uct_iface_attr_t *iface_attr)
 {
@@ -147,7 +211,7 @@ static ucs_status_t uct_cuda_ipc_iface_query(uct_iface_h tl_iface,
 
     iface_attr->cap.get.max_bcopy       = 0;
     iface_attr->cap.get.min_zcopy       = 0;
-    iface_attr->cap.get.max_zcopy       = ULONG_MAX;
+    iface_attr->cap.get.max_zcopy       = uct_cuda_ipc_iface_get_max_get_zcopy(iface);
     iface_attr->cap.get.opt_zcopy_align = 1;
     iface_attr->cap.get.align_mtu       = iface_attr->cap.get.opt_zcopy_align;
     iface_attr->cap.get.max_iov         = 1;
@@ -372,12 +436,14 @@ static void uct_cuda_ipc_event_desc_init(ucs_mpool_t *mp, void *obj, void *chunk
 static void uct_cuda_ipc_event_desc_cleanup(ucs_mpool_t *mp, void *obj)
 {
     uct_cuda_ipc_event_desc_t *base = (uct_cuda_ipc_event_desc_t *) obj;
-    int active;
+    uct_cuda_ipc_iface_t *iface     = ucs_container_of(mp,
+                                                       uct_cuda_ipc_iface_t,
+                                                       event_desc);
+    CUcontext cuda_context;
 
-    UCT_CUDADRV_CTX_ACTIVE(active);
-
-    if (active) {
-        UCT_CUDADRV_FUNC_LOG_ERR(cuEventDestroy(base->event));
+    UCT_CUDADRV_FUNC_LOG_ERR(cuCtxGetCurrent(&cuda_context));
+    if (uct_cuda_base_context_match(cuda_context, iface->cuda_context)) {
+        UCT_CUDA_FUNC_LOG_ERR(cudaEventDestroy(base->event));
     }
 }
 
@@ -406,6 +472,7 @@ static ucs_mpool_ops_t uct_cuda_ipc_event_desc_mpool_ops = {
     .chunk_release = ucs_mpool_chunk_free,
     .obj_init      = uct_cuda_ipc_event_desc_init,
     .obj_cleanup   = uct_cuda_ipc_event_desc_cleanup,
+    .obj_str       = NULL
 };
 
 static UCS_CLASS_INIT_FUNC(uct_cuda_ipc_iface_t, uct_md_h md, uct_worker_h worker,
@@ -414,10 +481,11 @@ static UCS_CLASS_INIT_FUNC(uct_cuda_ipc_iface_t, uct_md_h md, uct_worker_h worke
 {
     uct_cuda_ipc_iface_config_t *config = NULL;
     ucs_status_t status;
+    ucs_mpool_params_t mp_params;
 
     config = ucs_derived_of(tl_config, uct_cuda_ipc_iface_config_t);
-    UCS_CLASS_CALL_SUPER_INIT(uct_base_iface_t, &uct_cuda_ipc_iface_ops, NULL,
-                              md, worker, params,
+    UCS_CLASS_CALL_SUPER_INIT(uct_base_iface_t, &uct_cuda_ipc_iface_ops,
+                              &uct_base_iface_internal_ops, md, worker, params,
                               tl_config UCS_STATS_ARG(params->stats_root)
                               UCS_STATS_ARG("cuda_ipc"));
 
@@ -430,24 +498,24 @@ static UCS_CLASS_INIT_FUNC(uct_cuda_ipc_iface_t, uct_md_h md, uct_worker_h worke
     self->config.max_poll            = config->max_poll;
     self->config.max_streams         = config->max_streams;
     self->config.enable_cache        = config->enable_cache;
+    self->config.enable_get_zcopy    = config->enable_get_zcopy;
     self->config.max_cuda_ipc_events = config->max_cuda_ipc_events;
 
-    status = ucs_mpool_init(&self->event_desc,
-                            0,
-                            sizeof(uct_cuda_ipc_event_desc_t),
-                            0,
-                            UCS_SYS_CACHE_LINE_SIZE,
-                            128,
-                            self->config.max_cuda_ipc_events,
-                            &uct_cuda_ipc_event_desc_mpool_ops,
-                            "CUDA_IPC EVENT objects");
+    ucs_mpool_params_reset(&mp_params);
+    mp_params.elem_size       = sizeof(uct_cuda_ipc_event_desc_t);
+    mp_params.elems_per_chunk = 128;
+    mp_params.max_elems       = self->config.max_cuda_ipc_events;
+    mp_params.ops             = &uct_cuda_ipc_event_desc_mpool_ops;
+    mp_params.name            = "CUDA_IPC EVENT objects";
+    status = ucs_mpool_init(&mp_params, &self->event_desc);
     if (UCS_OK != status) {
         ucs_error("mpool creation failed");
         return UCS_ERR_IO_ERROR;
     }
 
-    self->eventfd = -1;
+    self->eventfd             = -1;
     self->streams_initialized = 0;
+    self->cuda_context        = 0;
     ucs_queue_head_init(&self->outstanding_d2d_event_q);
 
     return UCS_OK;
@@ -457,11 +525,12 @@ static UCS_CLASS_CLEANUP_FUNC(uct_cuda_ipc_iface_t)
 {
     ucs_status_t status;
     int i;
-    int active;
+    CUcontext cuda_context;
 
-    UCT_CUDADRV_CTX_ACTIVE(active);
+    UCT_CUDADRV_FUNC_LOG_ERR(cuCtxGetCurrent(&cuda_context));
 
-    if (self->streams_initialized && active) {
+    if (self->streams_initialized &&
+        uct_cuda_base_context_match(cuda_context, self->cuda_context)) {
         for (i = 0; i < self->config.max_streams; i++) {
             status = UCT_CUDADRV_FUNC_LOG_ERR(cuStreamDestroy(self->stream_d2d[i]));
             if (UCS_OK != status) {

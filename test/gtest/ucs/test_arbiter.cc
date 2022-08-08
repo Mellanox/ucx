@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -487,7 +487,7 @@ UCS_TEST_F(test_arbiter, resched) {
     ucs_arbiter_cleanup(&arbiter);
 }
 
-/* check that it is possible to reuse removed 
+/* check that it is possible to reuse removed
  * element
  */
 UCS_TEST_F(test_arbiter, reuse_elem) {

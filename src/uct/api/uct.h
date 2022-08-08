@@ -1,8 +1,7 @@
 /**
  * @file        uct.h
  * @date        2014-2020
- * @copyright   NVIDIA Corporation. All rights reserved.
- * @copyright   Mellanox Technologies Ltd. All rights reserved.
+ * @copyright   NVIDIA CORPORATION & AFFILIATES. ALL RIGHTS RESERVED.
  * @copyright   Oak Ridge National Laboratory. All rights received.
  * @copyright   Advanced Micro Devices, Inc. All rights received.
  * @brief       Unified Communication Transport
@@ -23,7 +22,7 @@
 #include <ucs/type/cpu_set.h>
 #include <ucs/stats/stats_fwd.h>
 #include <ucs/sys/compiler_def.h>
-#include <ucs/sys/topo.h>
+#include <ucs/sys/topo/base/topo.h>
 
 #include <sys/socket.h>
 #include <stdio.h>
@@ -503,8 +502,8 @@ enum uct_flush_flags {
     UCT_FLUSH_FLAG_LOCAL    = 0,            /**< Guarantees that the data
                                                  transfer is completed but the
                                                  target buffer may not be
-                                                 updated yet.*/
-    UCT_FLUSH_FLAG_CANCEL   = UCS_BIT(0)    /**< The library will make a best
+                                                 updated yet. */
+    UCT_FLUSH_FLAG_CANCEL   = UCS_BIT(0),   /**< The library will make a best
                                                  effort attempt to cancel all
                                                  uncompleted operations.
                                                  However, there is a chance that
@@ -519,6 +518,15 @@ enum uct_flush_flags {
                                                  error state, and it becomes
                                                  unusable for send operations
                                                  and should be destroyed. */
+    UCT_FLUSH_FLAG_REMOTE   = UCS_BIT(1)    /**< Guarantees that all previous
+                                                 UCP memory update operations
+                                                 (put, atomics, etc.) are
+                                                 completed, the target memory
+                                                 of these operation was updated,
+                                                 and the updated memory is
+                                                 globally visible for all
+                                                 processing elements in the
+                                                 system. */
 };
 
 
@@ -540,11 +548,19 @@ enum uct_progress_types {
  * @brief Flags for active message send operation.
  */
 enum uct_msg_flags {
-    UCT_SEND_FLAG_SIGNALED = UCS_BIT(0) /**< Trigger @ref UCT_EVENT_RECV_SIG
-                                             event on remote side. Make best
-                                             effort attempt to avoid triggering
-                                             @ref UCT_EVENT_RECV event.
-                                             Ignored if not supported by interface. */
+    UCT_SEND_FLAG_SIGNALED   = UCS_BIT(0), /**< Trigger @ref UCT_EVENT_RECV_SIG
+                                                event on remote side. Make best
+                                                effort attempt to avoid
+                                                triggering @ref UCT_EVENT_RECV
+                                                event. Ignored if not supported
+                                                by interface. */
+    UCT_SEND_FLAG_PEER_CHECK = UCS_BIT(1)  /**< Forces checking connectivity to
+                                                a peer. If the connection is
+                                                not alive, an error callback
+                                                will be invoked. If the flag is
+                                                not set, there is no guarantee
+                                                that a connectivity error could
+                                                be detected.  */
 };
 
 
@@ -654,7 +670,10 @@ enum uct_iface_params_field {
     UCT_IFACE_PARAM_FIELD_AM_ALIGNMENT       = UCS_BIT(16),
 
     /** Enables @ref uct_iface_params_t::am_align_offset */
-    UCT_IFACE_PARAM_FIELD_AM_ALIGN_OFFSET    = UCS_BIT(17)
+    UCT_IFACE_PARAM_FIELD_AM_ALIGN_OFFSET    = UCS_BIT(17),
+
+    /** Enables @ref uct_iface_params_t::features */
+    UCT_IFACE_PARAM_FIELD_FEATURES           = UCS_BIT(18)
 };
 
 /**
@@ -850,7 +869,10 @@ enum uct_ep_params_field {
     UCT_EP_PARAM_FIELD_PRIV_DATA                  = UCS_BIT(14),
 
     /** Enables @ref uct_ep_params::private_data_length */
-    UCT_EP_PARAM_FIELD_PRIV_DATA_LENGTH           = UCS_BIT(15)
+    UCT_EP_PARAM_FIELD_PRIV_DATA_LENGTH           = UCS_BIT(15),
+
+    /** Enables @ref uct_ep_params::local_sockaddr */
+    UCT_EP_PARAM_FIELD_LOCAL_SOCKADDR             = UCS_BIT(16)
 };
 
 
@@ -869,6 +891,40 @@ enum uct_ep_connect_params_field {
     UCT_EP_CONNECT_PARAM_FIELD_PRIVATE_DATA_LENGTH  = UCS_BIT(1)
 };
 
+
+/**
+ * @ingroup UCT_RESOURCE
+ * @brief UCT interface configuration features
+ *
+ * The enumeration list describes the features supported by UCT. An
+ * application can request the features using @ref uct_iface_params "UCT parameters"
+ * during @ref uct_iface_open "UCT iface initialization" process.
+ */
+enum uct_iface_feature {
+    /** Request Active Message support */ 
+    UCT_IFACE_FEATURE_AM           = UCS_BIT(0),
+
+    /** Request PUT support */
+    UCT_IFACE_FEATURE_PUT          = UCS_BIT(1),
+
+    /** Request GET support */
+    UCT_IFACE_FEATURE_GET          = UCS_BIT(2),
+
+    /** Request 32-bit atomic operations support */
+    UCT_IFACE_FEATURE_AMO32        = UCS_BIT(3),
+
+    /** Request 64-bit atomic operations support */ 
+    UCT_IFACE_FEATURE_AMO64        = UCS_BIT(4),
+
+    /** Request tag matching offload support */ 
+    UCT_IFACE_FEATURE_TAG          = UCS_BIT(5),
+
+    /** Request remote flush support */ 
+    UCT_IFACE_FEATURE_FLUSH_REMOTE = UCS_BIT(6),
+
+    /** Used to determine the number of features */ 
+    UCT_IFACE_FEATURE_LAST         = UCS_BIT(7)
+};
 
 /*
  * @ingroup UCT_RESOURCE
@@ -1122,6 +1178,12 @@ struct uct_iface_params {
      * +-------------------+
      */
     size_t                                       am_align_offset;
+
+    /**
+     * UCT @ref uct_iface_feature "features" that are used for interface
+     * initialization.
+     */
+    uint64_t                                     features;
 };
 
 
@@ -1235,9 +1297,6 @@ struct uct_ep_params {
      * This callback is invoked when the remote server address provided in field
      * @ref uct_ep_params_t::sockaddr is resolved to the local device to be used
      * for connection establishment.
-     * @note In the event of a connection error, this callback will not be
-     *       invoked; @ref uct_ep_params_t::sockaddr_cb_client with indicating
-     *       the error code will be invoked instead.
      * @note This field is mutually exclusive with
      *       @ref uct_ep_params::sockaddr_pack_cb.
      */
@@ -1256,6 +1315,14 @@ struct uct_ep_params {
      * indicated by the @ref uct_cm_attr::max_conn_priv.
      */
     size_t                              private_data_length;
+
+    /**
+     * The sockaddr to bind locally. If set, @ref uct_ep_create
+     * will create an endpoint binding to this local sockaddr.
+     * @note The interface in this routine requires the
+     * @ref UCT_IFACE_FLAG_CONNECT_TO_SOCKADDR capability.
+     */
+    const ucs_sock_addr_t             *local_sockaddr;
 };
 
 
@@ -1365,7 +1432,7 @@ struct uct_listener_params {
  */
 struct uct_md_attr {
     struct {
-        size_t               max_alloc; /**< Maximal allocation size */
+        uint64_t             max_alloc; /**< Maximal allocation size */
         size_t               max_reg;   /**< Maximal registration size */
         uint64_t             flags;     /**< UCT_MD_FLAG_xx */
         uint64_t             reg_mem_types; /**< Bitmap of memory types that Memory Domain can be registered with */
@@ -1617,6 +1684,7 @@ enum {
 
 
 extern const char *uct_alloc_method_names[];
+extern const char *uct_device_type_names[];
 
 
 /**
@@ -2374,7 +2442,7 @@ ucs_status_t uct_md_mem_advise(uct_md_h md, uct_mem_h memh, void *addr,
  * must support @ref UCT_MD_FLAG_REG flag.
  *
  * @param [in]     md        Memory domain to register memory on.
- * @param [out]    address   Memory to register.
+ * @param [in]     address   Memory to register.
  * @param [in]     length    Size of memory to register. Must be >0.
  * @param [in]     flags     Memory allocation flags, see @ref uct_md_mem_flags.
  * @param [out]    memh_p    Filled with handle for allocated region.
@@ -2468,7 +2536,6 @@ ucs_status_t uct_mem_free(const uct_allocated_memory_t *mem);
 ucs_status_t uct_md_config_read(uct_component_h component,
                                 const char *env_prefix, const char *filename,
                                 uct_md_config_t **config_p);
-
 
 
 /**

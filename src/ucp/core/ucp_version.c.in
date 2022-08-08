@@ -1,5 +1,5 @@
 /*
-* Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
 
@@ -14,5 +14,5 @@ void ucp_get_version(unsigned *major_version, unsigned *minor_version,
 
 const char *ucp_get_version_string()
 {
-	return "@MAJOR_VERSION@.@MINOR_VERSION@.@PATCH_VERSION@";
+	return "@VERSION@";
 }

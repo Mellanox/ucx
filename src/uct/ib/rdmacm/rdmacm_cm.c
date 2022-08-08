@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2019-2021.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019-2021. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -11,7 +11,6 @@
 #include "rdmacm_cm_ep.h"
 #include <uct/ib/base/ib_iface.h>
 #include <uct/ib/mlx5/dv/ib_mlx5_ifc.h>
-#include <uct/ib/mlx5/ib_mlx5.h>
 #include <ucs/async/async.h>
 
 #include <poll.h>
@@ -80,10 +79,38 @@ uct_rdmacm_cm_device_context_init(uct_rdmacm_cm_device_context_t *ctx,
 #if HAVE_DECL_MLX5DV_IS_SUPPORTED
     char out[UCT_IB_MLX5DV_ST_SZ_BYTES(query_hca_cap_out)] = {};
     char in[UCT_IB_MLX5DV_ST_SZ_BYTES(query_hca_cap_in)]   = {};
+    uct_rdmacm_cm_reserved_qpn_blk_t *blk;
     uint64_t general_obj_types_caps;
+    ucs_status_t status;
     void *cap;
+#endif
+    struct ibv_port_attr port_attr;
+    struct ibv_device_attr dev_attr;
     int ret;
+    int i;
 
+    ctx->num_dummy_qps = 0;
+
+    ret = ibv_query_device(verbs, &dev_attr);
+    if (ret != 0) {
+        ucs_error("ibv_query_device(%s) failed: %m", dev_name);
+        return UCS_ERR_IO_ERROR;
+    }
+
+    ctx->eth_ports = 0;
+    for (i = 0; i < dev_attr.phys_port_cnt; ++i) {
+        ret = ibv_query_port(verbs, i + UCT_IB_FIRST_PORT, &port_attr);
+        if (ret != 0) {
+            ucs_error("ibv_query_port (%s) failed: %m", dev_name);
+            return UCS_ERR_IO_ERROR;
+        }
+
+        if (IBV_PORT_IS_LINK_LAYER_ETHERNET(&port_attr)) {
+            ctx->eth_ports |= UCS_BIT(i);
+        }
+    }
+
+#if HAVE_DECL_MLX5DV_IS_SUPPORTED
     if (cm->config.reserved_qpn == UCS_NO) {
         goto dummy_qp_ctx_init;
     }
@@ -99,11 +126,9 @@ uct_rdmacm_cm_device_context_init(uct_rdmacm_cm_device_context_t *ctx,
     UCT_IB_MLX5DV_SET(query_hca_cap_in, in, op_mod,
                       (UCT_IB_MLX5_CAP_GENERAL << 1) |
                       UCT_IB_MLX5_HCA_CAP_OPMOD_GET_CUR);
-    ret = mlx5dv_devx_general_cmd(verbs, in, sizeof(in),
-                                  out, sizeof(out));
-    if (ret != 0) {
-        ucs_debug("mlx5dv_devx_general_cmd(%s, QUERY_HCA_CAP) failed: %m",
-                  dev_name);
+    status = uct_ib_mlx5_devx_general_cmd(verbs, in, sizeof(in), out,
+                                          sizeof(out), "QUERY_HCA_CAP", 1);
+    if (status != UCS_OK) {
         goto dummy_qp_ctx_init;
     }
 
@@ -117,15 +142,24 @@ uct_rdmacm_cm_device_context_init(uct_rdmacm_cm_device_context_t *ctx,
     UCT_IB_MLX5DV_SET(query_hca_cap_in, in, op_mod,
                       (UCT_IB_MLX5_CAP_2_GENERAL << 1) |
                       UCT_IB_MLX5_HCA_CAP_OPMOD_GET_CUR);
-    ret = mlx5dv_devx_general_cmd(verbs, in, sizeof(in),
-                                  out, sizeof(out));
-    if (ret != 0) {
-        ucs_debug("mlx5dv_devx_general_cmd(%s, QUERY_HCA_CAP_2) failed: %m", dev_name);
+    status = uct_ib_mlx5_devx_general_cmd(verbs, in, sizeof(in), out,
+                                          sizeof(out), "QUERY_HCA_CAP_2", 1);
+    if (status != UCS_OK) {
         goto dummy_qp_ctx_init;
     }
 
     ctx->log_reserved_qpn_granularity =
             UCT_IB_MLX5DV_GET(cmd_hca_cap_2, cap, log_reserved_qpn_granularity);
+
+    /* Try-allocate a reserved QPN block. If fails, fallback to dummy QP. */
+    status = uct_rdmacm_cm_reserved_qpn_blk_alloc(ctx, verbs,
+                                                  UCS_LOG_LEVEL_DEBUG, &blk);
+    if (status != UCS_OK) {
+        goto dummy_qp_ctx_init;
+    }
+
+    uct_rdmacm_cm_reserved_qpn_blk_release(blk);
+
     ucs_debug("%s reserved qpn cap: log_reserved_qpn_granularity is 0x%x",
               dev_name, ctx->log_reserved_qpn_granularity);
 
@@ -144,6 +178,7 @@ dummy_qp_ctx_init:
     }
 
     ctx->use_reserved_qpn = 0;
+
     /* Create a dummy completion queue */
     ctx->cq = ibv_create_cq(verbs, 1, NULL, NULL, 0);
     if (ctx->cq == NULL) {
@@ -164,14 +199,20 @@ uct_rdmacm_cm_device_context_cleanup(uct_rdmacm_cm_device_context_t *ctx)
         /* There can be some blks are not fully used, then they won't be
            destroyed in RDMACM CM EP, so need to be destroyed here. */
         ucs_list_for_each_safe(blk, tmp, &ctx->blk_list, entry) {
-            uct_rdmacm_cm_reserved_qpn_blk_destroy(blk);
+            uct_rdmacm_cm_reserved_qpn_blk_release(blk);
         }
+        ucs_list_head_init(&ctx->blk_list);
 
         ucs_spinlock_destroy(&ctx->lock);
     } else {
         ret = ibv_destroy_cq(ctx->cq);
         if (ret != 0) {
             ucs_warn("ibv_destroy_cq() returned %d: %m", ret);
+        }
+
+        if (ctx->num_dummy_qps != 0) {
+            ucs_warn("ctx %p: %u dummy qps were not destroyed", ctx,
+                     ctx->num_dummy_qps);
         }
     }
 }
@@ -237,9 +278,10 @@ out:
 }
 
 ucs_status_t
-uct_rdmacm_cm_reserved_qpn_blk_add(uct_rdmacm_cm_device_context_t *ctx,
-                                   struct ibv_context *verbs,
-                                   uct_rdmacm_cm_reserved_qpn_blk_t **blk_p)
+uct_rdmacm_cm_reserved_qpn_blk_alloc(uct_rdmacm_cm_device_context_t *ctx,
+                                     struct ibv_context *verbs,
+                                     ucs_log_level_t err_level,
+                                     uct_rdmacm_cm_reserved_qpn_blk_t **blk_p)
 {
     ucs_status_t status = UCS_ERR_UNSUPPORTED;
 
@@ -265,15 +307,22 @@ uct_rdmacm_cm_reserved_qpn_blk_add(uct_rdmacm_cm_device_context_t *ctx,
     blk->obj = mlx5dv_devx_obj_create(verbs, in, sizeof(in),
                                       out, sizeof(out));
     if (blk->obj == NULL) {
-        ucs_error("mlx5dv_devx_obj_create(CREATE_GENERAL_OBJECT, type=RESERVED_QPN) failed, syndrome %x: %m",
-                  UCT_IB_MLX5DV_GET(create_mkey_out, out, syndrome));
+        ucs_log(err_level,
+                "mlx5dv_devx_obj_create(dev=%s GENERAL_OBJECT, "
+                "type=RESERVED_QPN granularity=%d) failed, "
+                "syndrome 0x%x: %m",
+                ibv_get_device_name(verbs->device),
+                ctx->log_reserved_qpn_granularity,
+                UCT_IB_MLX5DV_GET(general_obj_out_cmd_hdr, out, syndrome));
         status = UCS_ERR_IO_ERROR;
         goto err_free_blk;
     }
 
     blk->first_qpn = UCT_IB_MLX5DV_GET(general_obj_out_cmd_hdr, out, obj_id);
-    blk->next_avail_qpn_offset = 0;
-    blk->refcount              = 0;
+
+    ucs_trace("%s: created reserved QPN 0x%x count %u blk %p",
+              ibv_get_device_name(verbs->device), blk->first_qpn,
+              1 << ctx->log_reserved_qpn_granularity, blk);
 
     *blk_p = blk;
     return UCS_OK;
@@ -285,16 +334,15 @@ err_free_blk:
     return status;
 }
 
-void uct_rdmacm_cm_reserved_qpn_blk_destroy(uct_rdmacm_cm_reserved_qpn_blk_t *blk)
+void uct_rdmacm_cm_reserved_qpn_blk_release(
+        uct_rdmacm_cm_reserved_qpn_blk_t *blk)
 {
 #if HAVE_DECL_MLX5DV_IS_SUPPORTED
     ucs_assert(blk->refcount == 0);
 
-    if (mlx5dv_devx_obj_destroy(blk->obj)) {
-        ucs_error("mlx5dv_devx_obj_destroy(DESTROY_GENERAL_OBJECT, type=RESERVED_QPN) failed: %m");
-    }
+    uct_ib_mlx5_devx_obj_destroy(blk->obj, "RESERVED_QPN");
+    ucs_trace("destroyed reserved QPN 0x%x blk %p", blk->first_qpn, blk);
 
-    ucs_list_del(&blk->entry);
     ucs_free(blk);
 #endif
 }
@@ -329,7 +377,7 @@ static void uct_rdmacm_cm_handle_event_addr_resolved(struct rdma_cm_event *event
         ucs_diag("%s: rdma_resolve_route failed: %m",
                   uct_rdmacm_cm_ep_str(cep, ep_str, UCT_RDMACM_EP_STRING_LEN));
         remote_data.field_mask = 0;
-        uct_rdmacm_cm_ep_set_failed(cep, &remote_data, UCS_ERR_UNREACHABLE);
+        uct_rdmacm_cm_ep_set_failed(cep, &remote_data, UCS_ERR_UNREACHABLE, 1);
     }
 }
 
@@ -338,12 +386,13 @@ static void uct_rdmacm_cm_handle_event_route_resolved(struct rdma_cm_event *even
     uct_rdmacm_cm_ep_t *cep = (uct_rdmacm_cm_ep_t*)event->id->context;
     uint8_t pack_priv_data[UCT_RDMACM_TCP_PRIV_DATA_LEN];
     size_t pack_priv_data_length;
+    uct_cm_remote_data_t remote_data;
     ucs_status_t status;
 
     ucs_assert(event->id == cep->id);
 
     if (cep->super.resolve_cb != NULL) {
-        status = uct_rdmacm_cm_ep_resolve_cb(cep);
+        status = uct_rdmacm_cm_ep_resolve_cb(cep, UCS_OK);
         goto out;
     }
 
@@ -359,8 +408,8 @@ static void uct_rdmacm_cm_handle_event_route_resolved(struct rdma_cm_event *even
 
 out:
     if (status != UCS_OK) {
-        cep->status = status;
-        cep->flags |= UCT_RDMACM_CM_EP_FAILED;
+        remote_data.field_mask = 0;
+        uct_rdmacm_cm_ep_set_failed(cep, &remote_data, status, 0);
     }
 }
 
@@ -369,15 +418,15 @@ static ucs_status_t uct_rdmacm_cm_id_to_dev_addr(uct_rdmacm_cm_t *cm,
                                                  uct_device_addr_t **dev_addr_p,
                                                  size_t *dev_addr_len_p)
 {
+    uct_rdmacm_cm_device_context_t *ctx;
     uct_ib_address_pack_params_t params;
-    struct ibv_port_attr port_attr;
     uct_ib_address_t *dev_addr;
     struct ibv_qp_attr qp_attr;
     size_t addr_length;
     int qp_attr_mask;
-    char dev_name[UCT_DEVICE_NAME_MAX];
     char ah_attr_str[128];
     uct_ib_roce_version_info_t roce_info;
+    ucs_status_t status;
     int ret;
 
     params.flags = 0;
@@ -395,11 +444,9 @@ static ucs_status_t uct_rdmacm_cm_id_to_dev_addr(uct_rdmacm_cm_t *cm,
         return UCS_ERR_CONNECTION_RESET;
     }
 
-    ret = ibv_query_port(cm_id->pd->context, cm_id->port_num, &port_attr);
-    if (ret) {
-        uct_rdmacm_cm_id_to_dev_name(cm_id, dev_name);
-        ucs_error("ibv_query_port (%s) failed: %m", dev_name);
-        return UCS_ERR_IO_ERROR;
+    status = uct_rdmacm_cm_get_device_context(cm, cm_id->pd->context, &ctx);
+    if (status != UCS_OK) {
+        return status;
     }
 
     if (qp_attr.ah_attr.is_global) {
@@ -415,7 +462,7 @@ static ucs_status_t uct_rdmacm_cm_id_to_dev_addr(uct_rdmacm_cm_t *cm,
     params.flags   |= UCT_IB_ADDRESS_PACK_FLAG_PATH_MTU;
     params.path_mtu = qp_attr.path_mtu;
 
-    if (IBV_PORT_IS_LINK_LAYER_ETHERNET(&port_attr)) {
+    if (ctx->eth_ports & UCS_BIT(cm_id->port_num - UCT_IB_FIRST_PORT)) {
         /* Ethernet address */
         ucs_assert(qp_attr.ah_attr.is_global);
 
@@ -557,7 +604,7 @@ static void uct_rdmacm_cm_handle_event_connect_response(struct rdma_cm_event *ev
         ucs_diag("%s client (ep=%p id=%p) failed to process a connect response ",
                  uct_rdmacm_cm_ep_str(cep, ep_str, UCT_RDMACM_EP_STRING_LEN),
                  cep, event->id);
-        uct_rdmacm_cm_ep_set_failed(cep, &remote_data, status);
+        uct_rdmacm_cm_ep_set_failed(cep, &remote_data, status, 1);
         return;
     }
 
@@ -608,8 +655,8 @@ static void uct_rdmacm_cm_handle_event_disconnected(struct rdma_cm_event *event)
               uct_rdmacm_cm_event_status_str(event), event->status);
 
     cep->flags |= UCT_RDMACM_CM_EP_GOT_DISCONNECT;
-    /* calling error_cb instead of disconnect CB directly handles out-of-order
-     * disconnect event prior connect_response/connect_established event */
+    /* uct_rdmacm_cm_ep_error_cb() will call the right user callback, according
+     * to the current ep state */
     remote_data.field_mask = 0;
     uct_rdmacm_cm_ep_error_cb(cep, &remote_data, UCS_ERR_CONNECTION_RESET);
 }
@@ -641,7 +688,7 @@ static void uct_rdmacm_cm_handle_error_event(struct rdma_cm_event *event)
                 ucs_assert(event->param.conn.private_data_len >= sizeof(*hdr));
                 status = UCS_ERR_REJECTED;
             } else {
-                status = UCS_ERR_UNREACHABLE;
+                status = UCS_ERR_CONNECTION_RESET;
             }
         }
 
@@ -672,7 +719,7 @@ static void uct_rdmacm_cm_handle_error_event(struct rdma_cm_event *event)
         uct_rdmacm_cm_handle_event_disconnected(event);
     } else {
         remote_data.field_mask = 0;
-        uct_rdmacm_cm_ep_set_failed(cep, &remote_data, status);
+        uct_rdmacm_cm_ep_set_failed(cep, &remote_data, status, 1);
     }
 }
 
@@ -825,6 +872,13 @@ static uct_iface_ops_t uct_rdmacm_cm_iface_ops = {
     .iface_is_reachable       = (uct_iface_is_reachable_func_t)ucs_empty_function_return_zero
 };
 
+static uct_iface_internal_ops_t uct_rdmacm_cm_iface_internal_ops = {
+    .iface_estimate_perf = (uct_iface_estimate_perf_func_t)ucs_empty_function_return_unsupported,
+    .iface_vfs_refresh   = (uct_iface_vfs_refresh_func_t)ucs_empty_function,
+    .ep_query            = uct_rdmacm_ep_query,
+    .ep_invalidate       = (uct_ep_invalidate_func_t)ucs_empty_function_return_unsupported
+};
+
 static ucs_status_t
 uct_rdmacm_cm_ipstr_to_sockaddr(const char *ip_str, struct sockaddr **saddr_p,
                                 const char *debug_name)
@@ -870,8 +924,8 @@ UCS_CLASS_INIT_FUNC(uct_rdmacm_cm_t, uct_component_h component,
     ucs_log_level_t log_lvl;
 
     UCS_CLASS_CALL_SUPER_INIT(uct_cm_t, &uct_rdmacm_cm_ops,
-                              &uct_rdmacm_cm_iface_ops, worker, component,
-                              config);
+                              &uct_rdmacm_cm_iface_ops, &uct_rdmacm_cm_iface_internal_ops,
+                              worker, component, config);
 
     kh_init_inplace(uct_rdmacm_cm_device_contexts, &self->ctxs);
 

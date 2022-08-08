@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2013.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2013. ALL RIGHTS RESERVED.
 * Copyright (C) Huawei Technologies Co., Ltd. 2021.  ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
@@ -17,6 +17,7 @@
 #include <ucs/sys/sys.h>
 #include <ucs/sys/math.h>
 #include <ucs/sys/string.h>
+#include <ucs/vfs/base/vfs_obj.h>
 #ifdef HAVE_MALLOC_H
 #include <malloc.h>
 #endif
@@ -24,6 +25,12 @@
 
 
 #define UCS_MEMTRACK_FORMAT_STRING    ("%22s: size: %9lu / %9lu\tcount: %9u / %9u\n")
+
+
+#define UCS_MEMTRACK_LOG_ZERO_SIZE_ALLOACTION(_size, _ptr, _name) \
+    if ((_size) == 0) { \
+        ucs_warn("allocated zero-size block %p for %s", _ptr, _name); \
+    }
 
 
 typedef struct ucs_memtrack_ptr {
@@ -200,7 +207,14 @@ ucs_memtrack_do_allocated(void *ptr, size_t size, const char *name)
     /* Add pointer to hash */
     iter = kh_put(ucs_memtrack_ptr_hash, &ucs_memtrack_context.ptrs,
                   (uintptr_t)ptr, &ret);
-    ucs_assertv(ret == 1 || ret == 2, "ret=%d", ret);
+    /* do NOT use assert here because it may cause hang due to memtrack malloc
+       deadlock */
+    if ((ret != UCS_KH_PUT_BUCKET_EMPTY) && (ret != UCS_KH_PUT_BUCKET_CLEAR)) {
+        pthread_mutex_unlock(&ucs_memtrack_context.lock);
+        ucs_fatal("ret == %d, prev allocation: %s, new allocation: %s", ret,
+                  kh_value(&ucs_memtrack_context.ptrs, iter).entry->name, name);
+    }
+
     kh_value(&ucs_memtrack_context.ptrs, iter).entry = entry;
     kh_value(&ucs_memtrack_context.ptrs, iter).size  = size;
 
@@ -278,9 +292,32 @@ static UCS_F_ALWAYS_INLINE void ucs_memtrack_releasing_internal(void *ptr)
     ucs_memtrack_do_releasing(ptr);
 }
 
+static void ucs_memtrack_vfs_read(void *obj, ucs_string_buffer_t *strb,
+                                  void *arg_ptr, uint64_t arg_u64)
+{
+    char *buffer;
+    size_t size;
+    FILE *f;
+
+    f = open_memstream(&buffer, &size);
+    ucs_memtrack_dump(f);
+    fclose(f);
+
+    ucs_string_buffer_appendf(strb, "%s", buffer);
+    free(buffer);
+}
+
+static void ucs_memtrack_vfs_init()
+{
+    ucs_vfs_obj_add_dir(NULL, &ucs_memtrack_context, "ucs/memtrack");
+    ucs_vfs_obj_add_ro_file(&ucs_memtrack_context, ucs_memtrack_vfs_read, NULL,
+                            0, "all");
+}
+
 void *ucs_malloc(size_t size, const char *name)
 {
     void *ptr = malloc(size);
+    UCS_MEMTRACK_LOG_ZERO_SIZE_ALLOACTION(size, ptr, name);
     ucs_memtrack_allocated_internal(ptr, size, name);
     return ptr;
 }
@@ -288,6 +325,7 @@ void *ucs_malloc(size_t size, const char *name)
 void *ucs_calloc(size_t nmemb, size_t size, const char *name)
 {
     void *ptr = calloc(nmemb, size);
+    UCS_MEMTRACK_LOG_ZERO_SIZE_ALLOACTION(nmemb * size, ptr, name);
     ucs_memtrack_allocated_internal(ptr, nmemb * size, name);
     return ptr;
 }
@@ -296,6 +334,7 @@ void *ucs_realloc(void *ptr, size_t size, const char *name)
 {
     ucs_memtrack_releasing_internal(ptr);
     ptr = realloc(ptr, size);
+    UCS_MEMTRACK_LOG_ZERO_SIZE_ALLOACTION(size, ptr, name);
     ucs_memtrack_allocated_internal(ptr, size, name);
     return ptr;
 }
@@ -388,13 +427,15 @@ void ucs_memtrack_init()
 
     status = UCS_STATS_NODE_ALLOC(&ucs_memtrack_context.stats,
                                   &ucs_memtrack_stats_class,
-                                  ucs_stats_get_root());
+                                  ucs_stats_get_root(), "");
     if (status != UCS_OK) {
         return;
     }
 
     ucs_debug("memtrack enabled");
     ucs_memtrack_context.enabled = 1;
+
+    ucs_memtrack_vfs_init();
 }
 
 void ucs_memtrack_cleanup()
@@ -404,6 +445,8 @@ void ucs_memtrack_cleanup()
     if (!ucs_memtrack_context.enabled) {
         return;
     }
+
+    ucs_vfs_obj_remove(&ucs_memtrack_context);
 
     ucs_memtrack_generate_report();
 
@@ -451,6 +494,7 @@ int ucs_posix_memalign_realloc(void **ptr, size_t boundary, size_t size,
 
     ret = ucs_posix_memalign(ptr, boundary, size, name);
     if (ret == 0) {
+        ucs_assert(*ptr != NULL);
         memcpy(*ptr, tmp, ucs_min(size, old_size));
         ucs_free(tmp);
     }

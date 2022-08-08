@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2012.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2012. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -434,8 +434,33 @@ void safe_usleep(double usec) {
 }
 
 bool is_inet_addr(const struct sockaddr* ifa_addr) {
-    return (ifa_addr->sa_family == AF_INET) ||
-           (ifa_addr->sa_family == AF_INET6);
+    if (ifa_addr->sa_family == AF_INET6) {
+        /* Skip IPv6 link-local and loopback address, that could not be used for
+           connection establishment */
+        auto saddr6 = (const struct sockaddr_in6*)ifa_addr;
+        return !IN6_IS_ADDR_LOOPBACK(&saddr6->sin6_addr) &&
+               !IN6_IS_ADDR_LINKLOCAL(&saddr6->sin6_addr);
+    } else {
+        return ifa_addr->sa_family == AF_INET;
+    }
+}
+
+static bool netif_has_sysfs_file(const char *ifa_name, const char *file_name)
+{
+    char path[PATH_MAX];
+    ucs_snprintf_safe(path, sizeof(path), "/sys/class/net/%s/%s", ifa_name,
+                      file_name);
+
+    struct stat st;
+    return stat(path, &st) >= 0;
+}
+
+bool is_interface_usable(struct ifaddrs *ifa)
+{
+    return ucs_netif_flags_is_active(ifa->ifa_flags) &&
+           ucs::is_inet_addr(ifa->ifa_addr) &&
+           !netif_has_sysfs_file(ifa->ifa_name, "bridge") &&
+           !netif_has_sysfs_file(ifa->ifa_name, "brport");
 }
 
 static std::vector<std::string> read_dir(const std::string& path)
@@ -460,14 +485,14 @@ out_close:
     return result;
 }
 
-static std::set<std::string> get_all_rdmacm_net_devices()
+static std::map<std::string, std::string> get_all_rdmacm_net_devices()
 {
     static const std::string sysfs_ib_dir  = "/sys/class/infiniband";
     static const std::string sysfs_net_dir = "/sys/class/net";
     static const std::string ndevs_fmt     = sysfs_ib_dir +
                                              "/%s/ports/%d/gid_attrs/ndevs/0";
     static const std::string node_guid_fmt = sysfs_ib_dir + "/%s/node_guid";
-    std::set<std::string> devices;
+    std::map<std::string, std::string> devices;
     char dev_name[32];
     char guid_buf[32];
     ssize_t nread;
@@ -479,10 +504,17 @@ static std::set<std::string> get_all_rdmacm_net_devices()
      * device.
      */
     for (size_t i = 0; i < ndevs.size(); ++i) {
-        std::string infiniband_dir = sysfs_net_dir + "/" + ndevs[i] +
-                                     "/device/infiniband";
-        if (!read_dir(infiniband_dir).empty()) {
-            devices.insert(ndevs[i]);
+        std::string infiniband_dir          = sysfs_net_dir + "/" + ndevs[i] +
+                                              "/device/infiniband";
+        std::vector<std::string> ib_devices = read_dir(infiniband_dir);
+
+        if (!ib_devices.empty()) {
+            std::string ib_device = ib_devices.front();
+            std::string ports_dir = infiniband_dir + "/" + ib_device +
+                                    "/ports";
+            std::string ib_port   = read_dir(ports_dir).front();
+
+            devices.emplace(ndevs[i], ib_device + ":" + ib_port);
         }
     }
 
@@ -509,7 +541,9 @@ static std::set<std::string> get_all_rdmacm_net_devices()
 
             /* use the device if node_guid != 0 */
             if (strstr(guid_buf, "0000:0000:0000:0000") == NULL) {
-                devices.insert(ucs_strtrim(dev_name));
+                devices.emplace(ucs_strtrim(dev_name),
+                                std::string(ndev_name) + ":" +
+                                ucs::to_string(port_num));
             }
         }
     }
@@ -517,16 +551,23 @@ static std::set<std::string> get_all_rdmacm_net_devices()
     return devices;
 }
 
-bool is_rdmacm_netdev(const char *ifa_name) {
+std::string get_rdmacm_netdev(const char *ifa_name)
+{
     static bool initialized = false;
-    static std::set<std::string> devices;
+    static std::map<std::string, std::string> devices;
 
     if (!initialized) {
         devices     = get_all_rdmacm_net_devices();
         initialized = true;
     }
 
-    return devices.find(ifa_name) != devices.end();
+    auto dev = devices.find(ifa_name);
+    return (dev != devices.end()) ? dev->second : "";
+}
+
+bool is_rdmacm_netdev(const char *ifa_name)
+{
+    return !get_rdmacm_netdev(ifa_name).empty();
 }
 
 uint16_t get_port() {
@@ -590,6 +631,12 @@ std::string exit_status_info(int exit_status)
     return ss.str().substr(2, std::string::npos);
 }
 
+size_t limit_buffer_size(size_t size)
+{
+    return std::min(size, std::min(ucs_get_phys_mem_size() / 16,
+                                   ucs_get_memfree_size() / 4));
+}
+
 sock_addr_storage::sock_addr_storage() :
         m_size(0), m_is_valid(false), m_is_rdmacm_netdev(false)
 {
@@ -597,28 +644,33 @@ sock_addr_storage::sock_addr_storage() :
 }
 
 sock_addr_storage::sock_addr_storage(const ucs_sock_addr_t &ucs_sock_addr,
-                                     bool is_rdmacm_netdev)
+                                     bool is_rdmacm_netdev,
+                                     std::string netdev_name,
+                                     std::string rdmacm_netdev_name)
 {
     if (sizeof(m_storage) < ucs_sock_addr.addrlen) {
         memset(&m_storage, 0, sizeof(m_storage));
         m_size             = 0;
         m_is_valid         = false;
         m_is_rdmacm_netdev = false;
+        m_netdev_name      = "";
     } else {
         set_sock_addr(*ucs_sock_addr.addr, ucs_sock_addr.addrlen,
-                      is_rdmacm_netdev);
+                      is_rdmacm_netdev, netdev_name);
     }
 }
 
 void sock_addr_storage::set_sock_addr(const struct sockaddr &addr,
-                                      const size_t size, bool is_rdmacm_netdev)
+                                      const size_t size, bool is_rdmacm_netdev,
+                                      std::string netdev_name)
 {
     ASSERT_GE(sizeof(m_storage), size);
     ASSERT_TRUE(ucs::is_inet_addr(&addr));
     memcpy(&m_storage, &addr, size);
-    m_size             = size;
-    m_is_valid         = true;
-    m_is_rdmacm_netdev = is_rdmacm_netdev;
+    m_size               = size;
+    m_is_valid           = true;
+    m_is_rdmacm_netdev   = is_rdmacm_netdev;
+    m_netdev_name        = netdev_name;
 }
 
 void sock_addr_storage::reset_to_any() {
@@ -679,6 +731,11 @@ uint16_t sock_addr_storage::get_port() const {
 bool sock_addr_storage::is_rdmacm_netdev() const
 {
     return m_is_rdmacm_netdev;
+}
+
+std::string sock_addr_storage::netdev_name() const
+{
+    return m_netdev_name;
 }
 
 size_t sock_addr_storage::get_addr_size() const {
@@ -784,7 +841,8 @@ scoped_mutex_lock::~scoped_mutex_lock()
     pthread_mutex_unlock(&m_mutex);
 }
 
-std::vector<std::vector<ucs_memory_type_t> > supported_mem_type_pairs() {
+const std::vector<std::vector<ucs_memory_type_t> >& supported_mem_type_pairs()
+{
     static std::vector<std::vector<ucs_memory_type_t> > result;
 
     if (result.empty()) {

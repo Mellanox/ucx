@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2021.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2021. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -126,5 +126,14 @@ void ucs_handle_error(const char *message);
  */
 const char *ucs_debug_get_symbol_name(void *address);
 
+
+/**
+ * Check if signal should be processed by UCX as error.
+ *
+ * @param signum         Signal number to check.
+ *
+ * @return 1 if signal should be processes by UCX, 0 if passed to system.
+ */
+int ucs_debug_is_error_signal(int signum);
 
 #endif

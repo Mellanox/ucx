@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2019-2021.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019-2021. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -11,6 +11,7 @@
 #include "rdmacm_listener.h"
 
 #include <ucs/sys/sock.h>
+#include <ucs/async/async.h>
 
 
 #define UCS_RDMACM_MAX_BACKLOG_PATH        "/proc/sys/net/rdma_ucm/max_backlog"
@@ -36,8 +37,8 @@ UCS_CLASS_INIT_FUNC(uct_rdmacm_listener_t, uct_cm_h cm,
                     const struct sockaddr *saddr, socklen_t socklen,
                     const uct_listener_params_t *params)
 {
-    uct_rdmacm_cm_t *rdmacm_cm  = ucs_derived_of(cm, uct_rdmacm_cm_t);
-    int id_reuse_optval         = 1;
+    uct_rdmacm_cm_t *rdmacm_cm = ucs_derived_of(cm, uct_rdmacm_cm_t);
+    int id_reuse_optval        = 1;
     char ip_port_str[UCS_SOCKADDR_STRING_LEN];
     ucs_status_t status;
     int backlog;
@@ -98,10 +99,10 @@ UCS_CLASS_INIT_FUNC(uct_rdmacm_listener_t, uct_cm_h cm,
         goto err_destroy_id;
     }
 
-    ucs_debug("created an RDMACM listener %p on cm %p with cm_id: %p. "
-              "listening on %s", self, cm, self->id,
-              ucs_sockaddr_str(saddr, ip_port_str, UCS_SOCKADDR_STRING_LEN));
-
+    ucs_sockaddr_str(rdma_get_local_addr(self->id), ip_port_str,
+                     UCS_SOCKADDR_STRING_LEN);
+    ucs_debug("listener %p: created on cm %p %s rdma_cm_id %p", self, cm,
+              ip_port_str, self->id);
     return UCS_OK;
 
 err_destroy_id:
@@ -128,7 +129,12 @@ ucs_status_t uct_rdmacm_listener_reject(uct_listener_h listener,
 
 UCS_CLASS_CLEANUP_FUNC(uct_rdmacm_listener_t)
 {
+    ucs_async_context_t *async = self->super.cm->iface.worker->async;
+
+    UCS_ASYNC_BLOCK(async);
+    ucs_debug("listener %p: destroying rdma_cm_id %p", self, self->id);
     uct_rdmacm_cm_destroy_id(self->id);
+    UCS_ASYNC_UNBLOCK(async);
 }
 
 ucs_status_t uct_rdmacm_listener_query(uct_listener_h listener,

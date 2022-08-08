@@ -404,6 +404,8 @@ static const double __ac_HASH_UPPER = 0.77;
 #define KHASH_IMPL(name, khkey_t, khval_t, kh_is_map, __hash_func, __hash_equal) \
 	__KHASH_IMPL(name, static kh_inline klib_unused, khkey_t, khval_t, kh_is_map, __hash_func, __hash_equal)
 
+#define KHASH_STATIC_INITIALIZER {0}
+
 /* --- BEGIN OF HASH FUNCTIONS --- */
 
 /*! @function
@@ -446,7 +448,13 @@ static kh_inline khint_t __ac_X31_hash_string(const char *s)
 /*! @function
   @abstract     Const char* comparison function
  */
-#define kh_str_hash_equal(a, b) (strcmp(a, b) == 0)
+static inline int kh_str_hash_equal(const char *str1, const char *str2)
+{
+    /* Add NULL assertions to silence cppcheck */
+    kassert(str1 != NULL);
+    kassert(str2 != NULL);
+    return strcmp(str1, str2) == 0;
+}
 
 static kh_inline khint_t __ac_Wang_hash(khint_t key)
 {
@@ -649,7 +657,7 @@ typedef enum ucs_kh_put {
 		code;												\
 	} }
 
-/* More conenient interfaces */
+/* More convenient interfaces */
 
 /*! @function
   @abstract     Instantiate a hash set containing integer keys

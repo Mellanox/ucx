@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -145,8 +145,9 @@ static void print_iface_info(uct_worker_h worker, uct_md_h md,
 
     printf("#      Transport: %s\n", resource->tl_name);
     printf("#         Device: %s\n", resource->dev_name);
+    printf("#           Type: %s\n", uct_device_type_names[resource->dev_type]);
     printf("#  System device: %s",
-           ucs_topo_sys_device_bdf_name(resource->sys_device, buf, sizeof(buf)));
+           ucs_topo_sys_device_get_name(resource->sys_device));
     if (resource->sys_device != UCS_SYS_DEVICE_ID_UNKNOWN) {
         printf(" (%d)", resource->sys_device);
     }
@@ -412,6 +413,10 @@ static void print_md_info(uct_component_h component,
         goto out_close_md;
     }
 
+    if (!(print_opts & PRINT_DEVICES)) {
+        goto out_free_list;
+    }
+
     if (req_tl_name != NULL) {
         resource_index = 0;
         while (resource_index < num_resources) {
@@ -451,6 +456,9 @@ static void print_md_info(uct_component_h component,
         }
         if (md_attr.cap.flags & UCT_MD_FLAG_RKEY_PTR) {
             printf("#           rkey_ptr is supported\n");
+        }
+        if (md_attr.cap.flags & UCT_MD_FLAG_INVALIDATE) {
+            printf("#           memory invalidation is supported\n");
         }
     }
 
@@ -581,12 +589,14 @@ static void print_uct_component_info(uct_component_h component,
 
     for (i = 0; i < component_attr.md_resource_count; ++i) {
         print_md_info(component, &component_attr,
-                      component_attr.md_resources[i].md_name,
-                      print_opts, print_flags, req_tl_name);
+                      component_attr.md_resources[i].md_name, print_opts,
+                      print_flags, req_tl_name);
     }
 
-    if (component_attr.flags & UCT_COMPONENT_FLAG_CM) {
-        print_cm_info(component, &component_attr);
+    if (print_opts & PRINT_DEVICES) {
+        if (component_attr.flags & UCT_COMPONENT_FLAG_CM) {
+            print_cm_info(component, &component_attr);
+        }
     }
 }
 
@@ -603,11 +613,9 @@ void print_uct_info(int print_opts, ucs_config_print_flags_t print_flags,
         return;
     }
 
-    if (print_opts & PRINT_DEVICES) {
-        for (i = 0; i < num_components; ++i) {
-            print_uct_component_info(components[i], print_opts, print_flags,
-                                     req_tl_name);
-        }
+    for (i = 0; i < num_components; ++i) {
+        print_uct_component_info(components[i], print_opts, print_flags,
+                                 req_tl_name);
     }
 
     uct_release_component_list(components);

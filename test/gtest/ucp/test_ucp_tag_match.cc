@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 * Copyright (C) UT-Battelle, LLC. 2015. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
@@ -11,6 +11,8 @@
 extern "C" {
 #include <ucp/core/ucp_request.h>
 #include <ucp/core/ucp_types.h>
+#include <ucp/rndv/proto_rndv.h>
+#include <ucp/core/ucp_ep.inl>
 }
 
 using namespace ucs; /* For vector<char> serialization */
@@ -19,7 +21,7 @@ using namespace ucs; /* For vector<char> serialization */
 class test_ucp_tag_match : public test_ucp_tag {
 public:
     enum {
-        ENABLE_PROTO = UCS_BIT(2)
+        ENABLE_PROTO = UCS_BIT(8)
     };
 
     test_ucp_tag_match() {
@@ -63,6 +65,8 @@ public:
     }
 
 protected:
+    void test_iov(const size_t *iov_sizes, size_t iov_count);
+
     static void recv_callback_release_req(void *request, ucs_status_t status,
                                           ucp_tag_recv_info_t *info)
     {
@@ -139,6 +143,71 @@ UCS_TEST_P(test_ucp_tag_match, send_recv_exp_medium) {
     EXPECT_EQ((ucp_tag_t)0x111337, my_recv_req->info.sender_tag);
     EXPECT_EQ(sendbuf, recvbuf);
     request_free(my_recv_req);
+}
+
+void test_ucp_tag_match::test_iov(const size_t *iov_sizes, size_t iov_count)
+{
+    std::stringstream ss;
+    for (size_t i = 0; i < iov_count; ++i) {
+        ss << iov_sizes[i] << " ";
+    }
+    UCS_TEST_MESSAGE << "{ " << ss.str() << "}";
+
+    std::vector<std::string> sendbufs(iov_count);
+    std::vector<std::string> recvbufs(iov_count);
+
+    std::string send_flat_data;
+    ucp_dt_iov_t send_iov[iov_count], recv_iov[iov_count];
+    for (size_t i = 0; i < iov_count; ++i) {
+        sendbufs[i].resize(iov_sizes[i]);
+        ucs::fill_random(sendbufs[i]);
+        send_iov[i].buffer = &sendbufs[i][0];
+        send_iov[i].length = sendbufs[i].size();
+        send_flat_data    += sendbufs[i];
+
+        recvbufs[i].resize(iov_sizes[iov_count - i - 1], 'x');
+        recv_iov[i].buffer = &recvbufs[i][0];
+        recv_iov[i].length = recvbufs[i].size();
+    }
+
+    request *my_recv_req = recv_nb(recv_iov, iov_count, UCP_DATATYPE_IOV,
+                                   0x1337, 0xffff);
+    ASSERT_TRUE(!UCS_PTR_IS_ERR(my_recv_req));
+
+    send_b(send_iov, iov_count, UCP_DATATYPE_IOV, 0x111337);
+    wait(my_recv_req);
+
+    EXPECT_EQ(send_flat_data.size(), my_recv_req->info.length);
+    EXPECT_EQ((ucp_tag_t)0x111337, my_recv_req->info.sender_tag);
+    request_free(my_recv_req);
+
+    /* Compare data */
+    std::string recv_flat_data;
+    for (size_t i = 0; i < iov_count; ++i) {
+        recv_flat_data += recvbufs[i];
+    }
+    EXPECT_EQ(send_flat_data, recv_flat_data);
+}
+
+UCS_TEST_P(test_ucp_tag_match, send_recv_exp_iov, "RNDV_THRESH=inf")
+{
+    test_iov(NULL, 0);
+
+    static const size_t iov_sizes0[] = {0};
+    test_iov(iov_sizes0, ucs_static_array_size(iov_sizes0));
+
+    static const size_t iov_sizes1[] = {1000, 3000, 10000};
+    test_iov(iov_sizes1, ucs_static_array_size(iov_sizes1));
+
+    static const size_t iov_sizes2[] = {1000, 0, 10000, 0};
+    test_iov(iov_sizes2, ucs_static_array_size(iov_sizes2));
+
+    static const size_t iov_sizes3[] = {0, 3000, 0, 10000, 0, 0, 0};
+    test_iov(iov_sizes3, ucs_static_array_size(iov_sizes3));
+
+    static const size_t iov_sizes4[] = {32, 16, 18, 15, 0, 0, 1, 78, 54, 198,
+                                        234354, 1, 10, 100000, 0, 6};
+    test_iov(iov_sizes4, ucs_static_array_size(iov_sizes4));
 }
 
 UCS_TEST_P(test_ucp_tag_match, send2_nb_recv_exp_medium) {
@@ -478,14 +547,22 @@ public:
         RNDV_SCHEME_AUTO = 0,
         RNDV_SCHEME_PUT_ZCOPY,
         RNDV_SCHEME_GET_ZCOPY,
-        RNDV_SCHEME_LAST
+        RNDV_SCHEME_LAST,
+        RNDV_GET_ZCOPY_MANY_LANES,
+        PUT_ZCOPY_FLUSH = ENABLE_PROTO << 1
     };
 
     static const std::string rndv_schemes[];
 
     void init() {
         ASSERT_LE(rndv_scheme(), (int)RNDV_SCHEME_GET_ZCOPY);
+        UCS_STATIC_ASSERT(!(ENABLE_PROTO & UCS_MASK(RNDV_SCHEME_LAST)));
+        modify_config("RNDV_THRESH", "0");
         modify_config("RNDV_SCHEME", rndv_schemes[rndv_scheme()]);
+        modify_config("RNDV_PUT_FORCE_FLUSH", force_flush() ? "y" : "n");
+        if (get_variant_value() & RNDV_GET_ZCOPY_MANY_LANES) {
+            modify_config("MAX_RNDV_LANES", "3");
+        }
         test_ucp_tag_match::init();
     }
 
@@ -493,15 +570,21 @@ public:
         for (int rndv_scheme = 0; rndv_scheme < RNDV_SCHEME_LAST; ++rndv_scheme) {
             add_variant_with_value(variants, get_ctx_params(), rndv_scheme,
                                    "rndv_" + rndv_schemes[rndv_scheme]);
+            add_variant_with_value(variants, get_ctx_params(),
+                                   rndv_scheme | ENABLE_PROTO,
+                                   rndv_schemes[rndv_scheme] + ",proto");
         }
 
-        // Generate variants with and new protocols
+        // Add variant with force flush
         add_variant_with_value(variants, get_ctx_params(),
-                               RNDV_SCHEME_AUTO | ENABLE_PROTO,
-                               "rndv_auto,proto");
+                               RNDV_SCHEME_PUT_ZCOPY | ENABLE_PROTO |
+                                       PUT_ZCOPY_FLUSH,
+                               "rndv_put_flush,proto");
+        // Add variant to check the RNDV lanes weight correctness for many lanes number
         add_variant_with_value(variants, get_ctx_params(),
-                               RNDV_SCHEME_GET_ZCOPY | ENABLE_PROTO,
-                               "rndv_get_zcopy,proto");
+                               RNDV_SCHEME_GET_ZCOPY | ENABLE_PROTO |
+                                       RNDV_GET_ZCOPY_MANY_LANES,
+                               "rndv_get_zcopy,proto,many_lanes");
     }
 
 protected:
@@ -511,13 +594,18 @@ protected:
         ucs_assert(!(mask & ENABLE_PROTO));
         return get_variant_value() & mask;
     }
+
+    bool force_flush() const
+    {
+        return get_variant_value() & PUT_ZCOPY_FLUSH;
+    }
 };
 
 const std::string test_ucp_tag_match_rndv::rndv_schemes[] = { "auto",
                                                               "put_zcopy",
                                                               "get_zcopy" };
 
-UCS_TEST_P(test_ucp_tag_match_rndv, length0, "RNDV_THRESH=0")
+UCS_TEST_P(test_ucp_tag_match_rndv, length0)
 {
     request *my_send_req = send_nb((void*)0xdeadbeef, 0, DATATYPE, 1);
     ASSERT_TRUE(!UCS_PTR_IS_ERR(my_send_req));
@@ -529,7 +617,8 @@ UCS_TEST_P(test_ucp_tag_match_rndv, length0, "RNDV_THRESH=0")
     wait_and_validate(my_send_req);
 }
 
-UCS_TEST_P(test_ucp_tag_match_rndv, sync_send_unexp, "RNDV_THRESH=1048576") {
+UCS_TEST_P(test_ucp_tag_match_rndv, sync_send_unexp)
+{
     static const size_t size = 1148576;
     request             *my_send_req;
     ucp_tag_recv_info_t info;
@@ -564,7 +653,8 @@ UCS_TEST_P(test_ucp_tag_match_rndv, sync_send_unexp, "RNDV_THRESH=1048576") {
     request_free(my_send_req);
 }
 
-UCS_TEST_P(test_ucp_tag_match_rndv, req_exp, "RNDV_THRESH=1048576") {
+UCS_TEST_P(test_ucp_tag_match_rndv, req_exp)
+{
     static const size_t size = 1148576;
     request *my_send_req, *my_recv_req;
 
@@ -598,7 +688,8 @@ UCS_TEST_P(test_ucp_tag_match_rndv, req_exp, "RNDV_THRESH=1048576") {
     request_free(my_recv_req);
 }
 
-UCS_TEST_P(test_ucp_tag_match_rndv, rts_unexp, "RNDV_THRESH=1048576") {
+UCS_TEST_P(test_ucp_tag_match_rndv, rts_unexp)
+{
     static const size_t size = 1148576;
     request             *my_send_req;
     ucp_tag_recv_info_t info;
@@ -630,7 +721,8 @@ UCS_TEST_P(test_ucp_tag_match_rndv, rts_unexp, "RNDV_THRESH=1048576") {
     EXPECT_EQ(sendbuf, recvbuf);
 }
 
-UCS_TEST_P(test_ucp_tag_match_rndv, truncated, "RNDV_THRESH=1048576") {
+UCS_TEST_P(test_ucp_tag_match_rndv, truncated)
+{
     static const size_t size = 1148576;
     request *my_send_req;
     ucp_tag_recv_info_t info;
@@ -658,7 +750,8 @@ UCS_TEST_P(test_ucp_tag_match_rndv, truncated, "RNDV_THRESH=1048576") {
     wait_and_validate(my_send_req);
 }
 
-UCS_TEST_P(test_ucp_tag_match_rndv, post_larger_recv, "RNDV_THRESH=0") {
+UCS_TEST_P(test_ucp_tag_match_rndv, post_larger_recv)
+{
     /* small send size should probably be lower than minimum GET Zcopy
      * size supported by IB TLs */
     static const size_t small_send_size = 16;
@@ -736,11 +829,14 @@ UCS_TEST_P(test_ucp_tag_match_rndv, req_exp_auto_thresh, "RNDV_THRESH=auto") {
 }
 
 UCS_TEST_P(test_ucp_tag_match_rndv, exp_huge_mix) {
-    const size_t sizes[] = { 1000, 2000, 8000, 2500ul * UCS_MBYTE };
+    const std::vector<size_t> sizes = {1000, 2000, 8000,
+                                       ucs::limit_buffer_size(2500ul *
+                                                              UCS_MBYTE),
+                                       ucs::limit_buffer_size(UCS_GBYTE + 32)};
 
     /* small sizes should warm-up tag cache */
-    for (unsigned i = 0; i < ucs_static_array_size(sizes); ++i) {
-        const size_t size = sizes[i] / ucs::test_time_multiplier() /
+    for (auto c_size : sizes) {
+        const size_t size = c_size / ucs::test_time_multiplier() /
                             ucs::test_time_multiplier();
         request *my_send_req, *my_recv_req;
 
@@ -769,9 +865,11 @@ UCS_TEST_P(test_ucp_tag_match_rndv, exp_huge_mix) {
     }
 }
 
-UCS_TEST_P(test_ucp_tag_match_rndv, bidir_multi_exp_post, "RNDV_THRESH=0") {
-    const size_t sizes[] = { 8 * UCS_KBYTE, 128 * UCS_KBYTE, 512 * UCS_KBYTE,
-                             8 * UCS_MBYTE, 128 * UCS_MBYTE, 512 * UCS_MBYTE };
+UCS_TEST_P(test_ucp_tag_match_rndv, bidir_multi_exp_post)
+{
+    const size_t sizes[] = {8 * UCS_KBYTE, 128 * UCS_KBYTE, 512 * UCS_KBYTE,
+                            8 * UCS_MBYTE, 128 * UCS_MBYTE, 512 * UCS_MBYTE};
+    const size_t max_total_size = limit_buffer_size();
 
     receiver().connect(&sender(), get_ep_params());
 
@@ -781,6 +879,15 @@ UCS_TEST_P(test_ucp_tag_match_rndv, bidir_multi_exp_post, "RNDV_THRESH=0") {
                             ucs::test_time_multiplier();
         const size_t count = ucs_max((size_t)(5000.0 / sqrt(sizes[i]) /
                                               ucs::test_time_multiplier()), 3lu);
+
+        size_t total_size = size * count * 2;
+        if (total_size > max_total_size) {
+            UCS_TEST_MESSAGE << "Total size (" << total_size
+                             << ") exceeds limit (" << max_total_size
+                             << "), stopping the test";
+            break;
+        }
+
         std::vector<request*> sreqs;
         std::vector<request*> rreqs;
         std::vector<std::vector<char> > sbufs;
@@ -834,3 +941,87 @@ UCS_TEST_P(test_ucp_tag_match_rndv, bidir_multi_exp_post, "RNDV_THRESH=0") {
 
 UCP_INSTANTIATE_TEST_CASE(test_ucp_tag_match_rndv)
 UCP_INSTANTIATE_TEST_CASE_TLS(test_ucp_tag_match_rndv, mm_tcp, "posix,sysv,tcp")
+
+class test_ucp_tag_match_rndv_align : public test_ucp_tag_match_rndv {
+public:
+    enum {
+        RNDV_SCHEME_GET_ZCOPY,
+        RNDV_SCHEME_PUT_ZCOPY,
+        RNDV_SCHEME_LAST
+    };
+
+    static const std::string rndv_schemes[];
+
+    void init()
+    {
+        modify_config("RNDV_THRESH", "0");
+        modify_config("RNDV_ALIGN_THRESH", "0");
+        modify_config("RNDV_SCHEME", rndv_schemes[rndv_scheme()]);
+        test_ucp_tag_match::init();
+    }
+
+    static void get_test_variants(std::vector<ucp_test_variant>& variants)
+    {
+        for (int rndv_scheme = 0; rndv_scheme < RNDV_SCHEME_LAST; ++rndv_scheme) {
+            add_variant_with_value(variants, get_ctx_params(),
+                                   rndv_scheme | ENABLE_PROTO,
+                                   rndv_schemes[rndv_scheme] + ",proto");
+        }
+    }
+protected:
+    size_t min_frag()
+    {
+        if (rndv_scheme() == RNDV_SCHEME_GET_ZCOPY) {
+            return ucp_ep_config(receiver().ep())->rndv.get_zcopy.min;
+        } else if (rndv_scheme() == RNDV_SCHEME_PUT_ZCOPY) {
+            return ucp_ep_config(receiver().ep())->rndv.put_zcopy.min;
+        }
+        ucs_assert_always(0);
+        return 0;
+    }
+};
+
+const std::string test_ucp_tag_match_rndv_align::rndv_schemes[] = { "get_zcopy",
+                                                                    "put_zcopy"};
+
+UCS_TEST_P(test_ucp_tag_match_rndv_align, recv_align)
+{
+    size_t recv_offsets[4];
+    size_t sizes[] = { UCS_SYS_PCI_MAX_PAYLOAD, 139 * UCS_KBYTE, 2000,
+                       8000, ucs::limit_buffer_size(2500ul * UCS_MBYTE) };
+
+    receiver().connect(&sender(), get_ep_params());
+
+    recv_offsets[0] = 0;
+    recv_offsets[1] = min_frag();
+    recv_offsets[2] = UCS_SYS_PCI_MAX_PAYLOAD - 1;
+    recv_offsets[3] = (ucs::rand() % UCS_SYS_PCI_MAX_PAYLOAD) + 1;
+
+    for (unsigned i = 0; i < ucs_static_array_size(recv_offsets); i++) {
+        for (unsigned j = 0; j < ucs_static_array_size(sizes); j++) {
+            const size_t recv_offset = recv_offsets[i];
+            const size_t size        = sizes[j] / ucs::test_time_multiplier() /
+                                        ucs::test_time_multiplier();
+            std::vector<char> sendbuf(size, 0);
+            std::vector<char> recvbuf(size + recv_offset +
+                                      UCS_SYS_PCI_MAX_PAYLOAD, 0);
+            size_t offset = UCS_SYS_PCI_MAX_PAYLOAD -
+                ((size_t)&recvbuf[0] % UCS_SYS_PCI_MAX_PAYLOAD) + recv_offset;
+            request *ucx_req = recv_nb(&recvbuf[offset], size, DATATYPE, 0x1337, 0xffff);
+
+            ASSERT_FALSE(UCS_PTR_IS_ERR(ucx_req));
+            ASSERT_NE(nullptr, ucx_req); /* Couldn't be completed because didn't send yet */
+
+            ucs::fill_random(sendbuf);
+            send_b(&sendbuf[0], size, DATATYPE, 0x111337);
+            wait(ucx_req);
+            request_free(ucx_req);
+
+            std::vector<char> recvbuf_offs(&recvbuf[offset],
+                                           &recvbuf[offset+size]);
+            EXPECT_EQ(sendbuf, recvbuf_offs);
+        }
+    }
+}
+
+UCP_INSTANTIATE_TEST_CASE(test_ucp_tag_match_rndv_align)

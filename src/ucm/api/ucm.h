@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
  * Copyright (C) Advanced Micro Devices, Inc. 2019. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
@@ -176,7 +176,6 @@ typedef union ucm_event {
      *
      * This is a "read-only" event which is called whenever memory is mapped
      * or unmapped from process address space, in addition to the other events.
-     * It can return only UCM_EVENT_STATUS_NEXT.
      *
      * For UCM_EVENT_VM_MAPPED, callbacks are post
      * For UCM_EVENT_VM_UNMAPPED, callbacks are pre
@@ -213,7 +212,7 @@ typedef struct ucm_global_config {
     ucm_mmap_hook_mode_t mmap_hook_mode;              /* MMAP hook mode */
     int                  enable_malloc_hooks;         /* Enable installing malloc hooks */
     int                  enable_malloc_reloc;         /* Enable installing malloc relocations */
-    ucm_mmap_hook_mode_t cuda_hook_mode;              /* Cuda hooks mode */
+    int                  cuda_hook_modes;             /* Bitmap of allowed cuda hooks modes */
     int                  enable_dynamic_mmap_thresh;  /* Enable adaptive mmap threshold */
     size_t               alloc_alignment;             /* Alignment for memory allocations */
     int                  dlopen_process_rpath;        /* Process RPATH section in dlopen hook */
@@ -223,7 +222,7 @@ typedef struct ucm_global_config {
 
 /*
  * Global UCM configuration to be set externally.
- * @deprecated replaced by @ref ucm_library_init.
+ * @deprecated replaced by @ref ucm_set_global_opts.
  */
 extern ucm_global_config_t ucm_global_opts;
 
@@ -267,14 +266,11 @@ typedef void (*ucm_event_callback_t)(ucm_event_type_t event_type,
 
 
 /**
- * Initialize UCM library and set its configuration.
+ * Set UCM library configuration.
  *
- * @param [in]  ucm_opts   UCM library global configuration. If NULL, default
- *                         configuration is applied.
- *
- * @note Calling this function more than once in the same process has no effect.
+ * @param [in]  ucm_opts   UCM library global configuration.
  */
-void ucm_library_init(const ucm_global_config_t *ucm_opts);
+void ucm_set_global_opts(const ucm_global_config_t *ucm_opts);
 
 
 /**

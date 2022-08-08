@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -111,7 +111,7 @@ public:
     }
 
     void validate_connect(uct_ud_ep_t *ep, unsigned value,
-                          double timeout_sec=TEST_UD_TIMEOUT_IN_SEC) {
+                          double timeout_sec=TEST_UD_LINGER_TIMEOUT_IN_SEC) {
         ucs_time_t timeout = ucs_get_time() + ucs_time_from_sec(timeout_sec);
         while ((ep->dest_ep_id != value) && (ucs_get_time() < timeout)) {
             progress();
@@ -130,7 +130,7 @@ public:
     }
 
     void validate_recv(uct_ud_ep_t *ep, unsigned value,
-                       double timeout_sec=TEST_UD_TIMEOUT_IN_SEC) {
+                       double timeout_sec=TEST_UD_LINGER_TIMEOUT_IN_SEC) {
         ucs_time_t timeout = ucs_get_time() + ucs_time_from_sec(timeout_sec);
         while ((ucs_frag_list_sn(&ep->rx.ooo_pkts) < value - no_creq_cnt(ep)) &&
                (ucs_get_time() < timeout)) {
@@ -139,18 +139,18 @@ public:
         EXPECT_EQ(value - no_creq_cnt(ep), ucs_frag_list_sn(&ep->rx.ooo_pkts));
     }
 
-    void validate_flush() {
+    void validate_flush(unsigned base_psn = 1u) {
         /* 1 packets transmitted, 1 packets received */
-        EXPECT_EQ(2, ep(m_e1)->tx.psn);
-        EXPECT_EQ(1, ucs_frag_list_sn(&ep(m_e2)->rx.ooo_pkts));
+        EXPECT_EQ(base_psn + 1, ep(m_e1)->tx.psn);
+        EXPECT_EQ(base_psn, ucs_frag_list_sn(&ep(m_e2)->rx.ooo_pkts));
 
         /* no data transmitted back */
-        EXPECT_EQ(1, ep(m_e2)->tx.psn);
+        EXPECT_EQ(base_psn, ep(m_e2)->tx.psn);
 
         /* one packet was acked */
         EXPECT_EQ(0U, ucs_queue_length(&ep(m_e1)->tx.window));
-        EXPECT_EQ(1, ep(m_e1)->tx.acked_psn);
-        EXPECT_EQ(1, ep(m_e2)->rx.acked_psn);
+        EXPECT_EQ(base_psn, ep(m_e1)->tx.acked_psn);
+        EXPECT_EQ(base_psn, ep(m_e2)->rx.acked_psn);
     }
 
     void check_connection() {
@@ -251,7 +251,8 @@ UCS_TEST_SKIP_COND_P(test_ud, tx_window1,
     EXPECT_EQ(UCS_ERR_NO_RESOURCE, tx(m_e1));
 
     /* wait for ack */
-    ucs_time_t timeout = ucs_get_time() + ucs_time_from_sec(TEST_UD_TIMEOUT_IN_SEC);
+    ucs_time_t timeout =
+            ucs_get_time() + ucs_time_from_sec(TEST_UD_LINGER_TIMEOUT_IN_SEC);
     while ((ucs_get_time() < timeout) &&
             uct_ud_ep_no_window(ep(m_e1))) {
         short_progress_loop();
@@ -411,7 +412,8 @@ UCS_TEST_SKIP_COND_P(test_ud, crep_drop2,
 
     /* Wait for TX win to be empty (which means that all
      * CONN packets are handled) */
-    ucs_time_t timeout = ucs_get_time() + ucs_time_from_sec(TEST_UD_TIMEOUT_IN_SEC);
+    ucs_time_t timeout =
+            ucs_get_time() + ucs_time_from_sec(TEST_UD_LINGER_TIMEOUT_IN_SEC);
     while (ucs_get_time() < timeout) {
         if(ucs_queue_is_empty(&ep(m_e1)->tx.window) &&
            ucs_queue_is_empty(&ep(m_e2)->tx.window)) {
@@ -466,6 +468,45 @@ UCS_TEST_P(test_ud, crep_ack_drop) {
     ASSERT_UCS_OK(status);
 
     short_progress_loop();
+
+    m_e1->flush();
+    m_e2->flush();
+}
+
+static const char resend_iov_buf[] = "abc";
+
+static ucs_status_t
+test_ud_am_handler(void *arg, void *data, size_t length, unsigned flags)
+{
+    *(uint32_t*)arg = 1;
+    EXPECT_STREQ(resend_iov_buf, (char*)data);
+    return UCS_OK;
+}
+
+UCS_TEST_P(test_ud, resend_iov)
+{
+    connect_to_iface();
+
+    ep(m_e2, 0)->rx.rx_hook = drop_rx;
+    rx_drop_count           = 0;
+
+    UCS_TEST_GET_BUFFER_IOV(iov, iovcnt, resend_iov_buf, sizeof(resend_iov_buf),
+                            UCT_MEM_HANDLE_NULL, 1);
+
+    uint32_t received = 0;
+    ASSERT_UCS_OK(uct_iface_set_am_handler(m_e2->iface(), 0, test_ud_am_handler,
+                                           &received, UCT_CB_FLAG_ASYNC));
+
+    ucs_status_t status;
+    do {
+        status = uct_ep_am_short_iov(m_e1->ep(0), 0, iov, iovcnt);
+        progress();
+    } while (status == UCS_ERR_NO_RESOURCE);
+    ASSERT_UCS_OK(status);
+
+    wait_for_flag(&rx_drop_count);
+    ep(m_e2, 0)->rx.rx_hook = uct_ud_ep_null_hook;
+    wait_for_flag(&received);
 
     m_e1->flush();
     m_e2->flush();
@@ -795,7 +836,8 @@ UCS_TEST_SKIP_COND_P(test_ud, ep_destroy_flush,
 
 UCS_TEST_SKIP_COND_P(test_ud, ep_destroy_passive,
                      !check_caps(UCT_IFACE_FLAG_AM_SHORT)) {
-    connect();
+    connect_to_iface(0);
+    short_progress_loop(TEST_UD_PROGRESS_TIMEOUT);
 
     /* m_e2::ep[0] has to be revoked at the end of the testing */
     uct_ep_destroy(m_e2->ep(0));
@@ -804,7 +846,7 @@ UCS_TEST_SKIP_COND_P(test_ud, ep_destroy_passive,
     EXPECT_UCS_OK(tx(m_e1));
     EXPECT_UCS_OK(ep_flush_b(m_e1));
 
-    validate_flush();
+    validate_flush(3);
 
     /* revoke m_e2::ep[0] as it was destroyed manually */
     m_e2->revoke_ep(0);
@@ -876,7 +918,92 @@ UCS_TEST_SKIP_COND_P(test_ud, ctls_loss,
 
 UCT_INSTANTIATE_UD_TEST_CASE(test_ud)
 
-#ifdef HAVE_MLX5_HW
+
+class test_ud_peer_failure : public ud_base_test {
+public:
+    test_ud_peer_failure()
+    {
+        m_err_count = 0;
+    }
+
+    void init()
+    {
+        set_config("UD_TIMEOUT=3s");
+        ud_base_test::init();
+        connect();
+    }
+
+    void kill_receiver()
+    {
+        m_entities.remove(m_e2);
+    }
+
+    static ucs_status_t err_cb(void *arg, uct_ep_h ep, ucs_status_t status)
+    {
+        m_err_count++;
+        return UCS_OK;
+    }
+
+    uct_error_handler_t get_err_handler() const
+    {
+        return err_cb;
+    }
+
+protected:
+    static size_t m_err_count;
+};
+
+size_t test_ud_peer_failure::m_err_count = 0;
+
+UCS_TEST_SKIP_COND_P(test_ud_peer_failure, send_am_after_kill,
+                     !check_caps(UCT_IFACE_FLAG_AM_SHORT |
+                                 UCT_IFACE_FLAG_EP_CHECK),
+                     // Increase UD timer tick to not get NO_RESOURCE from AM
+                     "UD_TIMER_TICK?=2s") {
+    ucs_status_t status;
+
+    flush();
+
+    status = uct_ep_check(m_e1->ep(0), 0, NULL);
+    ASSERT_UCS_OK(status);
+    flush();
+    // Allow keepalive request to complete
+    short_progress_loop();
+
+    // Set TX window to big enough value to not get UCS_ERR_NO_RESOURCE from
+    // AM SHORT operations
+    set_tx_win(m_e1, 1024);
+
+    // We are still alive
+    EXPECT_EQ(0, m_err_count);
+
+    kill_receiver();
+
+    status = uct_ep_check(m_e1->ep(0), 0, NULL);
+    ASSERT_UCS_OK(status);
+
+    // Post AM operation to check that an error could be detected by EP_CHECK
+    // when an endpoint has an in-flight AM operation
+    const ucs_time_t loop_end_limit = ucs::get_deadline(10.0);
+    while ((m_err_count == 0) && (ucs_get_time() < loop_end_limit)) {
+        const uint64_t send_data = 0;
+        status = uct_ep_am_short(m_e1->ep(0), 0, 0, &send_data,
+                                 sizeof(send_data));
+        if (m_err_count == 0) {
+            ASSERT_UCS_OK(status);
+            // Have a 2-second deadline to wait for peer failure and ensure
+            // scheduling new AM operations while no error was detected
+            wait_for_flag(&m_err_count, 2.0);
+        }
+    }
+
+    EXPECT_EQ(1, m_err_count);
+}
+
+UCT_INSTANTIATE_UD_TEST_CASE(test_ud_peer_failure)
+
+
+#ifdef HAVE_MLX5_DV
 extern "C" {
 #include <uct/ib/mlx5/ib_mlx5.h>
 }
@@ -886,7 +1013,7 @@ class test_ud_iface_attrs : public test_uct_iface_attrs {
 public:
     attr_map_t get_num_iov() {
         attr_map_t iov_map;
-#ifdef HAVE_MLX5_HW
+#ifdef HAVE_MLX5_DV
         if (has_transport("ud_mlx5")) {
             // For am zcopy just small constant number of iovs is allowed
             // (to preserve some inline space for AM zcopy header)

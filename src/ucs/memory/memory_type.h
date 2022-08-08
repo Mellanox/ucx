@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2019.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -18,7 +18,6 @@ BEGIN_C_DECLS
  */
 #define UCS_MEMORY_TYPES_CPU_ACCESSIBLE \
     (UCS_BIT(UCS_MEMORY_TYPE_HOST) | \
-     UCS_BIT(UCS_MEMORY_TYPE_CUDA_MANAGED) | \
      UCS_BIT(UCS_MEMORY_TYPE_ROCM_MANAGED))
 
 

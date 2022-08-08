@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2013.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2013. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -8,6 +8,7 @@
 
 #include <ucs/config/parser.h>
 #include <ucs/config/global_opts.h>
+#include <ucs/stats/stats.h>
 #include <ucs/sys/sys.h>
 
 #include <memory>
@@ -62,6 +63,10 @@ void test_base::set_config(const std::string& config_str)
     modify_config_mode_t mode;
     std::string name, value;
 
+    if (config_str == "") {
+        return;
+    }
+
     if (pos == std::string::npos) {
         name  = config_str;
         value = "";
@@ -102,31 +107,18 @@ void test_base::set_config(const std::string& config_str)
     modify_config(name, value, mode);
 }
 
-void test_base::get_config(const std::string& name, std::string& value, size_t max)
-{
-    ucs_status_t status;
-
-    value.resize(max, '\0');
-    status = ucs_global_opts_get_value(name.c_str(),
-                                       const_cast<char*>(value.c_str()),
-                                       max);
-    if (status != UCS_OK) {
-        GTEST_FAIL() << "Invalid UCS configuration for " << name
-                     << ": " << ucs_status_string(status)
-                     << "(" << status << ")";
-    }
-}
-
-void test_base::modify_config(const std::string& name, const std::string& value,
+void test_base::modify_config(const std::string& name,
+                              const std::string& value,
                               modify_config_mode_t mode)
 {
-    ucs_status_t status = ucs_global_opts_set_value(name.c_str(), value.c_str());
+    ucs_status_t status = ucs_global_opts_set_value(name.c_str(),
+                                                    value.c_str());
     if (status == UCS_ERR_NO_ELEM) {
         switch (mode) {
         case FAIL_IF_NOT_EXIST:
-            GTEST_FAIL() << "Invalid UCS configuration for " << name << " : "
-                         << value << ", error message: "
-                         << ucs_status_string(status) << "(" << status << ")";
+            UCS_TEST_ABORT("Invalid UCS configuration for " << name << " : "
+                    << value << ", error message: "
+                    << ucs_status_string(status) << "(" << status << ")");
         case SETENV_IF_NOT_EXIST:
             m_env_stack.push_back(new scoped_setenv(("UCX_" + name).c_str(),
                                                     value.c_str()));
@@ -158,6 +150,27 @@ void test_base::pop_config()
     ucs_global_opts_release();
     ucs_global_opts = m_config_stack.back();
     m_config_stack.pop_back();
+}
+
+void test_base::stats_activate()
+{
+#ifdef ENABLE_STATS
+    ucs_stats_cleanup();
+    push_config();
+    modify_config("STATS_DEST",    "file:/dev/null");
+    modify_config("STATS_TRIGGER", "exit");
+    ucs_stats_init();
+    ASSERT_TRUE(ucs_stats_is_active());
+#endif
+}
+
+void test_base::stats_restore()
+{
+#ifdef ENABLE_STATS
+    ucs_stats_cleanup();
+    pop_config();
+    ucs_stats_init();
+#endif
 }
 
 ucs_log_func_rc_t
@@ -313,7 +326,7 @@ void test_base::SetUpProxy() {
         check_skip_test();
         init();
         m_initialized = true;
-        m_state = RUNNING;
+        m_state       = RUNNING;
     } catch (test_skip_exception& e) {
         skipped(e);
     } catch (test_abort_exception&) {

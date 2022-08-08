@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Mellanox Technologies Ltd. 2019. ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -58,6 +58,11 @@ Java_org_openucx_jucx_ucp_UcpWorker_createWorkerNative(JNIEnv *env, jobject jucx
     if (worker_params.field_mask & UCP_WORKER_PARAM_FIELD_EVENT_FD) {
         field = env->GetFieldID(jucx_param_class, "eventFD", "I");
         worker_params.event_fd = env->GetIntField(jucx_worker_params, field);
+    }
+
+    if (worker_params.field_mask & UCP_WORKER_PARAM_FIELD_CLIENT_ID) {
+        field = env->GetFieldID(jucx_param_class, "clientId", "J");
+        worker_params.client_id = env->GetLongField(jucx_worker_params, field);
     }
 
     ucs_status_t status = ucp_worker_create(ucp_context, &worker_params, &ucp_worker);
@@ -129,7 +134,7 @@ Java_org_openucx_jucx_ucp_UcpWorker_flushNonBlockingNative(JNIEnv *env, jclass c
 {
     ucp_request_param_t param;
 
-    jobject jucx_request = jucx_request_allocate(env, callback, &param, UCS_MEMORY_TYPE_UNKNOWN);
+    jobject jucx_request = jucx_request_allocate(env, callback, &param, NULL);
 
     param.cb.send = jucx_request_callback;
 
@@ -166,12 +171,13 @@ Java_org_openucx_jucx_ucp_UcpWorker_recvTaggedNonBlockingNative(JNIEnv *env, jcl
                                                                 jlong ucp_worker_ptr,
                                                                 jlong laddr, jlong size,
                                                                 jlong tag, jlong tag_mask,
-                                                                jobject callback, jint memory_type)
+                                                                jobject callback,
+                                                                jobject request_params)
 {
     ucp_request_param_t param = {0};
     ucp_tag_recv_info_t recv_info = {0};
 
-    jobject jucx_request = jucx_request_allocate(env, callback, &param, memory_type);
+    jobject jucx_request = jucx_request_allocate(env, callback, &param, request_params);
 
     param.op_attr_mask       |= UCP_OP_ATTR_FIELD_RECV_INFO;
     param.cb.recv             = recv_callback;
@@ -197,13 +203,13 @@ Java_org_openucx_jucx_ucp_UcpWorker_recvTaggedIovNonBlockingNative(JNIEnv *env, 
                                                                    jlongArray addresses,
                                                                    jlongArray sizes, jlong tag,
                                                                    jlong tag_mask, jobject callback,
-                                                                   jint memory_type)
+                                                                   jobject request_params)
 {
     int iovcnt;
     ucp_request_param_t param = {0};
     ucp_tag_recv_info_t recv_info = {0};
 
-    jobject jucx_request = jucx_request_allocate(env, callback, &param, memory_type);
+    jobject jucx_request = jucx_request_allocate(env, callback, &param, request_params);
     ucp_dt_iov_t* iovec = get_ucp_iov(env, addresses, sizes, iovcnt);
     if (iovec == NULL) {
         return NULL;
@@ -254,12 +260,12 @@ Java_org_openucx_jucx_ucp_UcpWorker_recvTaggedMessageNonBlockingNative(JNIEnv *e
                                                                        jlong laddr, jlong size,
                                                                        jlong msg_ptr,
                                                                        jobject callback,
-                                                                       jint memory_type)
+                                                                       jobject request_params)
 {
     ucp_request_param_t param = {0};
     ucp_tag_recv_info_t recv_info = {0};
 
-    jobject jucx_request = jucx_request_allocate(env, callback, &param, memory_type);
+    jobject jucx_request = jucx_request_allocate(env, callback, &param, request_params);
 
     param.op_attr_mask       |= UCP_OP_ATTR_FIELD_RECV_INFO;
     param.cb.recv             = recv_callback;
@@ -322,13 +328,14 @@ Java_org_openucx_jucx_ucp_UcpWorker_recvAmDataNonBlockingNative(JNIEnv *env, jcl
                                                                 jlong ucp_worker_ptr,
                                                                 jlong data_descr_ptr,
                                                                 jlong address, jlong length,
-                                                                jobject callback, jint memory_type)
+                                                                jobject callback,
+                                                                jobject request_params)
 {
     ucp_request_param_t param = {0};
     size_t recv_length;
 
 
-    jobject jucx_request = jucx_request_allocate(env, callback, &param, memory_type);
+    jobject jucx_request = jucx_request_allocate(env, callback, &param, request_params);
 
     param.op_attr_mask     |= UCP_OP_ATTR_FIELD_RECV_INFO;
     param.cb.recv_am        = stream_recv_callback;

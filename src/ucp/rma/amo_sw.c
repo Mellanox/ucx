@@ -1,5 +1,6 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2018.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2018. ALL RIGHTS RESERVED.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2021.  ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -13,14 +14,15 @@
 
 #include <ucs/arch/atomic.h>
 #include <ucs/profile/profile.h>
+#include <ucp/dt/datatype_iter.inl>
+#include <ucp/proto/proto_single.h>
 
 
-static size_t ucp_amo_sw_pack(void *dest, void *arg, uint8_t fetch)
+static size_t ucp_amo_sw_pack(void *dest, ucp_request_t *req, int fetch,
+                              size_t size)
 {
-    ucp_request_t *req            = arg;
     ucp_atomic_req_hdr_t *atomich = dest;
     ucp_ep_t *ep                  = req->send.ep;
-    size_t size                   = req->send.length;
     size_t length;
 
     atomich->address    = req->send.amo.remote_addr;
@@ -44,12 +46,16 @@ static size_t ucp_amo_sw_pack(void *dest, void *arg, uint8_t fetch)
 
 static size_t ucp_amo_sw_post_pack_cb(void *dest, void *arg)
 {
-    return ucp_amo_sw_pack(dest, arg, 0);
+    ucp_request_t *req = arg;
+
+    return ucp_amo_sw_pack(dest, req, 0, req->send.length);
 }
 
 static size_t ucp_amo_sw_fetch_pack_cb(void *dest, void *arg)
 {
-    return ucp_amo_sw_pack(dest, arg, 1);
+    ucp_request_t *req = arg;
+
+    return ucp_amo_sw_pack(dest, req, 1, req->send.length);
 }
 
 static UCS_F_ALWAYS_INLINE ucs_status_t
@@ -76,6 +82,7 @@ ucp_amo_sw_progress(uct_pending_req_t *self, uct_pack_callback_t pack_cb,
              * - with error if a fetch/post operation
              * - either with error or with success if a post operation */
             ucp_request_complete_send(req, status);
+            return UCS_OK;
         }
     }
 
@@ -126,8 +133,9 @@ static ucs_status_t ucp_progress_atomic_reply(uct_pending_req_t *self)
     ssize_t packed_len;
 
     req->send.lane = ucp_ep_get_am_lane(ep);
-    packed_len = uct_ep_am_bcopy(ep->uct_eps[req->send.lane], UCP_AM_ID_ATOMIC_REP,
-                                 ucp_amo_sw_pack_atomic_reply, req, 0);
+    packed_len     = uct_ep_am_bcopy(ucp_ep_get_lane(ep, req->send.lane),
+                                     UCP_AM_ID_ATOMIC_REP,
+                                     ucp_amo_sw_pack_atomic_reply, req, 0);
 
     if (packed_len < 0) {
         return (ucs_status_t)packed_len;
@@ -256,6 +264,9 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_atomic_req_handler, (arg, data, length, am_fl
             ucs_fatal("invalid atomic length: %u", atomicreqh->length);
         }
 
+        ucp_request_send_state_init(req, ucp_dt_make_contig(1),
+                                    atomicreqh->length);
+
         req->flags                           = 0;
         req->send.ep                         = ep;
         req->send.atomic_reply.remote_req_id = atomicreqh->req.req_id;
@@ -319,9 +330,129 @@ static void ucp_amo_sw_dump_packet(ucp_worker_h worker, uct_am_trace_type_t type
                      length - header_len);
 }
 
-UCP_DEFINE_AM(UCP_FEATURE_AMO, UCP_AM_ID_ATOMIC_REQ, ucp_atomic_req_handler,
-              ucp_amo_sw_dump_packet, 0);
+UCP_DEFINE_AM_WITH_PROXY(UCP_FEATURE_AMO, UCP_AM_ID_ATOMIC_REQ,
+                         ucp_atomic_req_handler, ucp_amo_sw_dump_packet, 0);
 UCP_DEFINE_AM(UCP_FEATURE_AMO, UCP_AM_ID_ATOMIC_REP, ucp_atomic_rep_handler,
               ucp_amo_sw_dump_packet, 0);
 
-UCP_DEFINE_AM_PROXY(UCP_AM_ID_ATOMIC_REQ);
+static size_t ucp_proto_amo_sw_post_pack_cb(void *dest, void *arg)
+{
+    ucp_request_t *req = arg;
+
+    return ucp_amo_sw_pack(dest, req, 0, req->send.state.dt_iter.length);
+}
+
+static size_t ucp_proto_amo_sw_fetch_pack_cb(void *dest, void *arg)
+{
+    ucp_request_t *req = arg;
+
+    return ucp_amo_sw_pack(dest, req, 1, req->send.state.dt_iter.length);
+}
+
+static ucs_status_t
+ucp_proto_amo_sw_progress(uct_pending_req_t *self, uct_pack_callback_t pack_cb,
+                          int fetch)
+{
+    ucp_request_t *req                   = ucs_container_of(self, ucp_request_t,
+                                                            send.uct);
+    const ucp_proto_single_priv_t *spriv = req->send.proto_config->priv;
+    ucp_datatype_iter_t next_iter;
+    ucs_status_t status;
+
+    if (!(req->flags & UCP_REQUEST_FLAG_PROTO_INITIALIZED)) {
+        status = ucp_ep_resolve_remote_id(req->send.ep, spriv->super.lane);
+        if (status != UCS_OK) {
+            return status;
+        }
+
+        ucp_datatype_iter_next_pack(&req->send.state.dt_iter,
+                                    req->send.ep->worker, SIZE_MAX,
+                                    &next_iter, &req->send.amo.value);
+
+        req->flags |= UCP_REQUEST_FLAG_PROTO_INITIALIZED;
+    }
+
+    return ucp_amo_sw_progress(self, pack_cb, fetch);
+}
+
+static ucs_status_t
+ucp_proto_amo_sw_init(const ucp_proto_init_params_t *init_params, unsigned flags)
+{
+    ucp_proto_single_init_params_t params = {
+        .super.super         = *init_params,
+        .super.latency       = 1.2e-6,
+        .super.overhead      = 0,
+        .super.cfg_thresh    = 0,
+        .super.cfg_priority  = 20,
+        .super.min_length    = 0,
+        .super.max_length    = SIZE_MAX,
+        .super.min_iov       = 0,
+        .super.min_frag_offs = UCP_PROTO_COMMON_OFFSET_INVALID,
+        .super.max_frag_offs = UCP_PROTO_COMMON_OFFSET_INVALID,
+        .super.max_iov_offs  = UCP_PROTO_COMMON_OFFSET_INVALID,
+        .super.hdr_size      = 0,
+        .super.send_op       = UCT_EP_OP_AM_BCOPY,
+        .super.memtype_op    = UCT_EP_OP_GET_SHORT,
+        .super.flags         = flags | UCP_PROTO_COMMON_INIT_FLAG_SINGLE_FRAG |
+                               UCP_PROTO_COMMON_INIT_FLAG_CAP_SEG_SIZE,
+        .lane_type           = UCP_LANE_TYPE_AM,
+        .tl_cap_flags        = 0
+    };
+
+    return ucp_proto_single_init(&params);
+}
+
+static ucs_status_t ucp_proto_amo_sw_progress_post(uct_pending_req_t *self)
+{
+    return ucp_proto_amo_sw_progress(self, ucp_proto_amo_sw_post_pack_cb, 0);
+}
+
+static ucs_status_t
+ucp_proto_amo_sw_init_post(const ucp_proto_init_params_t *init_params)
+{
+    UCP_RMA_PROTO_INIT_CHECK(init_params, UCP_OP_ID_AMO_POST);
+
+    if (init_params->select_param->dt_class != UCP_DATATYPE_CONTIG) {
+        return UCS_ERR_UNSUPPORTED;
+    }
+
+    return ucp_proto_amo_sw_init(init_params, 0);
+}
+
+ucp_proto_t ucp_get_amo_post_proto = {
+    .name     = "amo/post/sw",
+    .desc     = UCP_PROTO_RMA_EMULATION_DESC,
+    .flags    = 0,
+    .init     = ucp_proto_amo_sw_init_post,
+    .query    = ucp_proto_single_query,
+    .progress = {ucp_proto_amo_sw_progress_post},
+    .abort    = (ucp_request_abort_func_t)ucs_empty_function_do_assert_void
+};
+
+static ucs_status_t ucp_proto_amo_sw_progress_fetch(uct_pending_req_t *self)
+{
+    return ucp_proto_amo_sw_progress(self, ucp_proto_amo_sw_fetch_pack_cb, 1);
+}
+
+static ucs_status_t
+ucp_proto_amo_sw_init_fetch(const ucp_proto_init_params_t *init_params)
+{
+    if (((init_params->select_param->op_id != UCP_OP_ID_AMO_FETCH) &&
+         (init_params->select_param->op_id != UCP_OP_ID_AMO_CSWAP)) ||
+         (init_params->select_param->dt_class != UCP_DATATYPE_CONTIG)) {
+        return UCS_ERR_UNSUPPORTED;
+    }
+
+    return ucp_proto_amo_sw_init(init_params,
+                                 UCP_PROTO_COMMON_INIT_FLAG_RESPONSE);
+}
+
+ucp_proto_t ucp_get_amo_fetch_proto = {
+    .name     = "amo/fetch/sw",
+    .desc     = UCP_PROTO_RMA_EMULATION_DESC,
+    .flags    = 0,
+    .init     = ucp_proto_amo_sw_init_fetch,
+    .query    = ucp_proto_single_query,
+    .progress = {ucp_proto_amo_sw_progress_fetch},
+    .abort    = (ucp_request_abort_func_t)ucs_empty_function_do_assert_void
+};

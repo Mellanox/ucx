@@ -1,6 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2017-2021.  ALL RIGHTS RESERVED.
- * Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2017-2021. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -61,7 +60,16 @@ uct_component_t uct_rdmacm_component = {
         .size           = sizeof(uct_rdmacm_cm_config_t),
     },
     .tl_list            = UCT_COMPONENT_TL_LIST_INITIALIZER(&uct_rdmacm_component),
-    .flags              = UCT_COMPONENT_FLAG_CM
+    .flags              = UCT_COMPONENT_FLAG_CM,
+    .md_vfs_init        = (uct_component_md_vfs_init_func_t)ucs_empty_function
 };
 
-UCT_COMPONENT_REGISTER(&uct_rdmacm_component)
+UCS_F_CTOR void uct_rdmacm_init(void)
+{
+    uct_component_register(&uct_rdmacm_component);
+}
+
+UCS_F_DTOR void uct_rdmacm_cleanup(void)
+{
+    uct_component_unregister(&uct_rdmacm_component);
+}

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2020.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -148,7 +148,7 @@ _ucs_bitmap_word_index(size_t bitmap_words, size_t bit_index)
 
 #define _UCS_BITMAP_OP_INPLACE(_bitmap1, _bitmap2, _op) \
     { \
-        typeof(*(_bitmap1)) _bitmap2_copy = (_bitmap2); \
+        ucs_typeof(*(_bitmap1)) _bitmap2_copy = (_bitmap2); \
         size_t              _word_index; \
         _UCS_BITMAP_FOR_EACH_WORD(*(_bitmap1), _word_index) { \
             _UCS_BITMAP_WORD(*(_bitmap1), _word_index) = \

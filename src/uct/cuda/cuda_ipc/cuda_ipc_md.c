@@ -1,6 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2018-2019.  ALL RIGHTS RESERVED.
- * Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2018-2019. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -30,8 +29,9 @@ static ucs_config_field_t uct_cuda_ipc_md_config_table[] = {
 
 static ucs_status_t uct_cuda_ipc_md_query(uct_md_h md, uct_md_attr_t *md_attr)
 {
-    md_attr->cap.flags            = UCT_MD_FLAG_REG |
-                                    UCT_MD_FLAG_NEED_RKEY;
+    md_attr->cap.flags            = UCT_MD_FLAG_REG       |
+                                    UCT_MD_FLAG_NEED_RKEY |
+                                    UCT_MD_FLAG_INVALIDATE;
     md_attr->cap.reg_mem_types    = UCS_BIT(UCS_MEMORY_TYPE_CUDA);
     md_attr->cap.alloc_mem_types  = 0;
     md_attr->cap.access_mem_types = UCS_BIT(UCS_MEMORY_TYPE_CUDA);
@@ -39,18 +39,20 @@ static ucs_status_t uct_cuda_ipc_md_query(uct_md_h md, uct_md_attr_t *md_attr)
     md_attr->cap.max_alloc        = 0;
     md_attr->cap.max_reg          = ULONG_MAX;
     md_attr->rkey_packed_size     = sizeof(uct_cuda_ipc_key_t);
-    md_attr->reg_cost             = ucs_linear_func_make(0, 0);
+    md_attr->reg_cost             = UCS_LINEAR_FUNC_ZERO;
     memset(&md_attr->local_cpus, 0xff, sizeof(md_attr->local_cpus));
     return UCS_OK;
 }
 
-static ucs_status_t uct_cuda_ipc_mkey_pack(uct_md_h md, uct_mem_h memh,
-                                           void *rkey_buffer)
+static ucs_status_t
+uct_cuda_ipc_mkey_pack(uct_md_h md, uct_mem_h memh,
+                       const uct_md_mkey_pack_params_t *params,
+                       void *rkey_buffer)
 {
-    uct_cuda_ipc_key_t *packed   = (uct_cuda_ipc_key_t *) rkey_buffer;
-    uct_cuda_ipc_key_t *mem_hndl = (uct_cuda_ipc_key_t *) memh;
+    uct_cuda_ipc_key_t *packed   = rkey_buffer;
+    uct_cuda_ipc_key_t *mem_hndl = memh;
 
-    *packed          = *mem_hndl;
+    *packed = *mem_hndl;
 
     return UCT_CUDADRV_FUNC_LOG_ERR(cuDeviceGetUuid(&packed->uuid,
                                                     mem_hndl->dev_num));
@@ -223,9 +225,7 @@ uct_cuda_ipc_mem_reg_internal(uct_md_h uct_md, void *addr, size_t length,
     CUdevice cu_device;
     ucs_status_t status;
 
-    if (!length) {
-        return UCS_OK;
-    }
+    ucs_assert((addr != NULL) && (length != 0));
 
     log_level = (flags & UCT_MD_MEM_FLAG_HIDE_ERRORS) ? UCS_LOG_LEVEL_DEBUG :
                 UCS_LOG_LEVEL_ERROR;
@@ -249,8 +249,9 @@ uct_cuda_ipc_mem_reg_internal(uct_md_h uct_md, void *addr, size_t length,
     return UCS_OK;
 }
 
-static ucs_status_t uct_cuda_ipc_mem_reg(uct_md_h md, void *address, size_t length,
-                                         unsigned flags, uct_mem_h *memh_p)
+static ucs_status_t
+uct_cuda_ipc_mem_reg(uct_md_h md, void *address, size_t length,
+                     const uct_md_mem_reg_params_t *params, uct_mem_h *memh_p)
 {
     uct_cuda_ipc_key_t *key;
     ucs_status_t status;
@@ -348,7 +349,9 @@ uct_cuda_ipc_component_t uct_cuda_ipc_component = {
         },
         .cm_config          = UCS_CONFIG_EMPTY_GLOBAL_LIST_ENTRY,
         .tl_list            = UCT_COMPONENT_TL_LIST_INITIALIZER(&uct_cuda_ipc_component.super),
-        .flags              = 0
+        .flags              = 0,
+        .md_vfs_init        =
+                (uct_component_md_vfs_init_func_t)ucs_empty_function
     },
     .md                     = NULL,
 };

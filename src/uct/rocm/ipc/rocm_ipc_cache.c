@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2018.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2018. ALL RIGHTS RESERVED.
  * Copyright (C) Advanced Micro Devices, Inc. 2019. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
@@ -75,7 +75,7 @@ static void uct_rocm_ipc_cache_invalidate_regions(uct_rocm_ipc_cache_t *cache,
 
     ucs_list_head_init(&region_list);
     ucs_pgtable_search_range(&cache->pgtable, (ucs_pgt_addr_t)from,
-                             (ucs_pgt_addr_t)to,
+                             (ucs_pgt_addr_t)to - 1,
                              uct_rocm_ipc_cache_region_collect_callback,
                              &region_list);
     ucs_list_for_each_safe(region, tmp, &region_list, list) {
@@ -217,7 +217,7 @@ ucs_status_t uct_rocm_ipc_create_cache(uct_rocm_ipc_cache_t **cache,
         goto err_destroy_rwlock;
     }
 
-    cache_desc->name = strdup(name);
+    cache_desc->name = ucs_strdup(name, "rocm_ipc_cache_name");
     if (cache_desc->name == NULL) {
         status = UCS_ERR_NO_MEMORY;
         goto err_destroy_rwlock;
@@ -229,7 +229,7 @@ ucs_status_t uct_rocm_ipc_create_cache(uct_rocm_ipc_cache_t **cache,
 err_destroy_rwlock:
     pthread_rwlock_destroy(&cache_desc->lock);
 err:
-    free(cache_desc);
+    ucs_free(cache_desc);
     return status;
 }
 
@@ -238,6 +238,6 @@ void uct_rocm_ipc_destroy_cache(uct_rocm_ipc_cache_t *cache)
     uct_rocm_ipc_cache_purge(cache);
     ucs_pgtable_cleanup(&cache->pgtable);
     pthread_rwlock_destroy(&cache->lock);
-    free(cache->name);
+    ucs_free(cache->name);
     ucs_free(cache);
 }

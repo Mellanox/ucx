@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -15,6 +15,12 @@
 #include <ucp/core/ucp_request.h>
 #include <ucp/dt/dt.inl>
 
+
+/* Convenience macros for setting eager protocols descriptions  */
+#define UCP_PROTO_EAGER_BCOPY_DESC \
+    "eager " UCP_PROTO_COPY_IN_DESC " " UCP_PROTO_COPY_OUT_DESC
+#define UCP_PROTO_EAGER_ZCOPY_DESC \
+    "eager " UCP_PROTO_ZCOPY_DESC " " UCP_PROTO_COPY_OUT_DESC
 
 /*
  * EAGER_ONLY, EAGER_MIDDLE

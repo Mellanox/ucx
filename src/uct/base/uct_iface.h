@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2021.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2021. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -19,7 +19,7 @@
 #include <ucs/debug/debug_int.h>
 #include <ucs/stats/stats.h>
 #include <ucs/sys/compiler.h>
-#include <ucs/sys/sys.h>
+#include <ucs/sys/uid.h>
 #include <ucs/type/class.h>
 #include <uct/api/v2/uct_v2.h>
 #include <ucs/type/param.h>
@@ -130,6 +130,10 @@ enum {
                     "UCT_EP_PARAM_FIELD_DEV_ADDR and UCT_EP_PARAM_FIELD_IFACE_ADDR are not defined")
 
 
+#define UCT_ATTR_VALUE(_obj, _attrs, _name, _flag, _default) \
+    UCS_PARAM_VALUE(UCS_PP_TOKENPASTE3(UCT_, _obj, _ATTR_FIELD), _attrs, \
+                    _name, _flag, _default)
+
 #define UCT_EP_PARAM_VALUE(_params, _name, _flag, _default) \
     UCS_PARAM_VALUE(UCT_EP_PARAM_FIELD, _params, _name, _flag, _default)
 
@@ -140,6 +144,11 @@ enum {
 
 #define UCT_EP_PARAMS_GET_PATH_INDEX(_params) \
     UCT_EP_PARAM_VALUE(_params, path_index, PATH_INDEX, 0)
+
+
+#define UCT_IFACE_PARAM_FEATURE(_params, _feature) \
+    (UCT_IFACE_PARAM_VALUE(_params, features, FEATURES, UINT64_MAX) & \
+     UCT_IFACE_FEATURE_ ## _feature)
 
 
 /**
@@ -205,10 +214,6 @@ enum {
     UCT_CHECK_PARAM((_flags) == 0, "Unsupported flags: %x", (_flags));
 
 
-#define UCT_IFACE_PARAM_VALUE(_params, _name, _flag, _default) \
-    UCS_PARAM_VALUE(UCT_IFACE_PARAM_FIELD, _params, _name, _flag, _default)
-
-
 /**
  * Declare classes for structures defined in api/tl.h
  */
@@ -235,10 +240,20 @@ typedef ucs_status_t (*uct_iface_estimate_perf_func_t)(
 typedef void (*uct_iface_vfs_refresh_func_t)(uct_iface_h iface);
 
 
+/* Query the attributes of the ep */
+typedef ucs_status_t (*uct_ep_query_func_t)(uct_ep_h ep, uct_ep_attr_t *ep_attr);
+
+
+/* Invalidate the ep to emulate transport level error */
+typedef ucs_status_t (*uct_ep_invalidate_func_t)(uct_ep_h ep, unsigned flags);
+
+
 /* Internal operations, not exposed by the external API */
 typedef struct uct_iface_internal_ops {
     uct_iface_estimate_perf_func_t iface_estimate_perf;
     uct_iface_vfs_refresh_func_t   iface_vfs_refresh;
+    uct_ep_query_func_t            ep_query;
+    uct_ep_invalidate_func_t       ep_invalidate;
 } uct_iface_internal_ops_t;
 
 
@@ -290,8 +305,7 @@ typedef struct uct_failed_iface {
  * Keepalive info used by EP
  */
 typedef struct uct_keepalive_info {
-    ucs_time_t start_time; /* Process start time */
-    char       proc[]; /* Process owner proc dir */
+    unsigned long start_time; /* Process start time */
 } uct_keepalive_info_t;
 
 
@@ -388,6 +402,89 @@ typedef struct uct_iface_local_addr_ns {
 
 
 /**
+ * Declare TL constructor and destructor
+ *
+ * @param [in] _name   TL name
+ */
+#define UCT_TL_DECL(_name) \
+    void uct_##_name##_init(void); \
+    void uct_##_name##_cleanup(void);
+
+
+/* Helper macro to provide ctor/dtor scope */
+#define _UCT_IFACE_CTOR_
+#define _UCT_IFACE_DTOR_
+#define _UCT_IFACE_CTOR_ctor UCS_F_CTOR
+#define _UCT_IFACE_DTOR_ctor UCS_F_DTOR
+
+
+/**
+ * Register/unregister TL
+ *
+ * @param [in] _name          Component and TL name
+ * @param [in] _scope         Scope for functions, must be ctor or empty
+ * @param [in] _init_code     Initialization code
+ * @param [in] _cleanup_code  Cleanup code
+ */
+#define UCT_TL_INIT(_component, _name, _scope, _init_code, _cleanup_code) \
+    UCS_PP_EXPAND(_UCT_IFACE_CTOR_##_scope) void uct_##_name##_init(void) \
+    { \
+        _init_code; \
+        uct_tl_register(_component, &UCT_TL_NAME(_name)); \
+    } \
+    UCS_PP_EXPAND(_UCT_IFACE_DTOR_##_scope) void uct_##_name##_cleanup(void) \
+    { \
+        uct_tl_unregister(&UCT_TL_NAME(_name)); \
+        _cleanup_code; \
+    }
+
+
+/**
+ * Register/unregister component and TL
+ *
+ * @param [in] _name          Component and TL name
+ * @param [in] _scope         Scope for functions, must be ctor or empty
+ * @param [in] _init_code     Initialization code
+ * @param [in] _cleanup_code  Cleanup code
+ */
+#define UCT_SINGLE_TL_INIT(_component, _name, _scope, _init_code, \
+                           _cleanup_code) \
+    UCT_TL_INIT(_component, _name, _scope, \
+                {_init_code; uct_component_register(_component);}, \
+                {uct_component_unregister(_component); _cleanup_code;})
+
+
+#define UCT_TL_NAME(_name) uct_##_name##_tl
+
+
+/**
+ * Transport registration routines
+ *
+ * @param _component      Component to add the transport to
+ * @param _name           Name of the transport (should be a token, not a string)
+ * @param _query_devices  Function to query the list of available devices
+ * @param _iface_class    Struct type defining the uct_iface class
+ * @param _cfg_prefix     Prefix for configuration variables
+ * @param _cfg_table      Transport configuration table
+ * @param _cfg_struct     Struct type defining transport configuration
+ */
+#define UCT_TL_DEFINE_ENTRY(_component, _name, _query_devices, _iface_class, \
+                            _cfg_prefix, _cfg_table, _cfg_struct) \
+    \
+    uct_tl_t UCT_TL_NAME(_name) = { \
+        .name               = #_name, \
+        .query_devices      = _query_devices, \
+        .iface_open         = UCS_CLASS_NEW_FUNC_NAME(_iface_class), \
+        .config = { \
+            .name           = #_name" transport", \
+            .prefix         = _cfg_prefix, \
+            .table          = _cfg_table, \
+            .size           = sizeof(_cfg_struct), \
+         } \
+    };
+
+
+/**
  * "Base" structure which defines interface configuration options.
  * Specific transport extend this structure.
  */
@@ -407,23 +504,40 @@ struct uct_iface_config {
  */
 typedef struct uct_iface_mpool_config {
     unsigned          max_bufs;  /* Upper limit to number of buffers */
-    unsigned          bufs_grow; /* How many buffers (approx.) are allocated every time */
+    unsigned          bufs_grow; /* How many buffers (approx.) are allocated 1st time */
+    size_t            max_chunk_size; /* Maximal chunk size */
+    double            grow_factor; /* Increase each new allocated chunk by this factor */
 } uct_iface_mpool_config_t;
 
 
 /**
  * Define configuration fields for memory pool parameters.
  */
-#define UCT_IFACE_MPOOL_CONFIG_FIELDS(_prefix, _dfl_max, _dfl_grow, _mp_name, _offset, _desc) \
+#define UCT_IFACE_MPOOL_CONFIG_FIELDS(_prefix, _dfl_max, _dfl_grow, \
+                                      _dfl_max_chunk_size, _dfl_grow_factor, \
+                                      _mp_name, _offset, _desc) \
     {_prefix "MAX_BUFS", UCS_PP_QUOTE(_dfl_max), \
      "Maximal number of " _mp_name " buffers for the interface. -1 is infinite." \
      _desc, \
      (_offset) + ucs_offsetof(uct_iface_mpool_config_t, max_bufs), UCS_CONFIG_TYPE_INT}, \
     \
     {_prefix "BUFS_GROW", UCS_PP_QUOTE(_dfl_grow), \
-     "How much buffers are added every time the " _mp_name " memory pool grows.\n" \
+     "The initial number of buffers in " _mp_name " memory pool.\n" \
      "0 means the value is chosen by the transport.", \
-     (_offset) + ucs_offsetof(uct_iface_mpool_config_t, bufs_grow), UCS_CONFIG_TYPE_UINT}
+     (_offset) + ucs_offsetof(uct_iface_mpool_config_t, bufs_grow), UCS_CONFIG_TYPE_UINT}, \
+    \
+    {_prefix "MAX_CHUNK_SIZE", UCS_PP_QUOTE(_dfl_max_chunk_size), \
+     "Maximal chunk size for " _mp_name " memory pool.\n", \
+     (_offset) + ucs_offsetof(uct_iface_mpool_config_t, max_chunk_size), UCS_CONFIG_TYPE_MEMUNITS}, \
+    \
+    {_prefix "GROW_FACTOR", UCS_PP_QUOTE(_dfl_grow_factor), \
+     "Growth factor for new chunks in " _mp_name ". Each time a new chunk is allocated,\n" \
+     "its size is the multiple of the previous chunk size by this number.",\
+     (_offset) + ucs_offsetof(uct_iface_mpool_config_t, grow_factor), UCS_CONFIG_TYPE_DOUBLE}
+
+
+void uct_iface_mpool_config_copy(ucs_mpool_params_t *mp_params,
+                                 const uct_iface_mpool_config_t *cfg);
 
 
 /**
@@ -554,8 +668,6 @@ typedef struct {
  * @param _priv   Variable which will hold a pointer to request private data.
  * @param _queue  The pending queue.
  * @param _cond   Condition which should be true in order to keep dispatching.
- *
- * TODO support a callback returning UCS_INPROGRESS.
  */
 #define uct_pending_queue_dispatch(_priv, _queue, _cond) \
     while (!ucs_queue_is_empty(_queue)) { \
@@ -563,10 +675,8 @@ typedef struct {
         uct_pending_req_t *_req; \
         ucs_status_t _status; \
         \
-        _base_priv = \
-            ucs_queue_head_elem_non_empty((_queue), \
-                                          uct_pending_req_priv_queue_t, \
-                                          queue_elem); \
+        _base_priv = ucs_queue_head_elem_non_empty( \
+                (_queue), uct_pending_req_priv_queue_t, queue_elem); \
         \
         UCS_STATIC_ASSERT(sizeof(*(_priv)) <= UCT_PENDING_REQ_PRIV_LEN); \
         _priv = (typeof(_priv))(_base_priv); \
@@ -578,8 +688,15 @@ typedef struct {
         _req = ucs_container_of(_priv, uct_pending_req_t, priv); \
         ucs_queue_pull_non_empty(_queue); \
         _status = _req->func(_req); \
-        if ((_status == UCS_ERR_NO_RESOURCE) || (_status == UCS_INPROGRESS)) { \
-            ucs_queue_push_head(_queue, &_base_priv->queue_elem); \
+        if ((_status) == UCS_OK) { \
+            /* pending element should be removed from queue */ \
+            continue; \
+        } \
+        \
+        /* pending element did not complete; return it to the queue */ \
+        ucs_queue_push_head(_queue, &_base_priv->queue_elem); \
+        if (UCS_STATUS_IS_ERR(_status)) { \
+            break; \
         } \
     }
 
@@ -842,16 +959,55 @@ ucs_status_t uct_base_ep_am_short_iov(uct_ep_h ep, uint8_t id, const uct_iov_t *
 
 int uct_ep_get_process_proc_dir(char *buffer, size_t max_len, pid_t pid);
 
-ucs_status_t uct_ep_keepalive_create(pid_t pid, uct_keepalive_info_t **ka_p);
+ucs_status_t uct_ep_keepalive_init(uct_keepalive_info_t *ka, pid_t pid);
 
-ucs_status_t
-uct_ep_keepalive_check(uct_ep_h tl_ep, uct_keepalive_info_t **ka, pid_t pid,
-                       unsigned flags, uct_completion_t *comp);
+void uct_ep_keepalive_check(uct_ep_h ep, uct_keepalive_info_t *ka, pid_t pid,
+                            unsigned flags, uct_completion_t *comp);
 
 void uct_ep_set_iface(uct_ep_h ep, uct_iface_t *iface);
 
 ucs_status_t uct_base_ep_stats_reset(uct_base_ep_t *ep, uct_base_iface_t *iface);
 
 void uct_iface_vfs_refresh(void *obj);
+
+ucs_status_t uct_ep_invalidate(uct_ep_h ep, unsigned flags);
+
+void uct_tl_register(uct_component_t *component, uct_tl_t *tl);
+
+void uct_tl_unregister(uct_tl_t *tl);
+
+static UCS_F_ALWAYS_INLINE int uct_ep_op_is_short(uct_ep_operation_t op)
+{
+    return UCS_BIT(op) & (UCS_BIT(UCT_EP_OP_AM_SHORT) |
+                          UCS_BIT(UCT_EP_OP_PUT_SHORT) |
+                          UCS_BIT(UCT_EP_OP_GET_SHORT) |
+                          UCS_BIT(UCT_EP_OP_EAGER_SHORT) |
+                          UCS_BIT(UCT_EP_OP_ATOMIC_POST));
+}
+
+static UCS_F_ALWAYS_INLINE int uct_ep_op_is_bcopy(uct_ep_operation_t op)
+{
+    return UCS_BIT(op) & (UCS_BIT(UCT_EP_OP_AM_BCOPY) |
+                          UCS_BIT(UCT_EP_OP_PUT_BCOPY) |
+                          UCS_BIT(UCT_EP_OP_GET_BCOPY) |
+                          UCS_BIT(UCT_EP_OP_EAGER_BCOPY));
+}
+
+static UCS_F_ALWAYS_INLINE int uct_ep_op_is_zcopy(uct_ep_operation_t op)
+{
+    return UCS_BIT(op) & (UCS_BIT(UCT_EP_OP_AM_ZCOPY) |
+                          UCS_BIT(UCT_EP_OP_PUT_ZCOPY) |
+                          UCS_BIT(UCT_EP_OP_GET_ZCOPY) |
+                          UCS_BIT(UCT_EP_OP_ATOMIC_FETCH) |
+                          UCS_BIT(UCT_EP_OP_EAGER_ZCOPY));
+}
+
+static UCS_F_ALWAYS_INLINE int uct_ep_op_is_fetch(uct_ep_operation_t op)
+{
+    return UCS_BIT(op) & (UCS_BIT(UCT_EP_OP_GET_SHORT) |
+                          UCS_BIT(UCT_EP_OP_GET_BCOPY) |
+                          UCS_BIT(UCT_EP_OP_GET_ZCOPY) |
+                          UCS_BIT(UCT_EP_OP_ATOMIC_FETCH));
+}
 
 #endif

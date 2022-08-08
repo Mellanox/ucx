@@ -1,5 +1,5 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
 #
 # Copyright (C) UT-Battelle, LLC. 2015. ALL RIGHTS RESERVED.
 # See file LICENSE for terms.
@@ -19,6 +19,7 @@ AM_CPPFLAGS           = \
     -DTEST_LIB_DIR="$(abs_builddir)/.libs"
 AM_CFLAGS             = $(BASE_CFLAGS)
 test_memhooks_SOURCES = test_memhooks.c
+test_memhooks_LDFLAGS = -ldl
 
 
 # A library we use for testing that memory hooks work in libraries loaded

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -38,6 +38,13 @@ void ucm_fire_mmap_events(int events);
 ucs_status_t ucm_mmap_test_installed_events(int events);
 ucs_status_t ucm_mmap_test_events(int events, const char *event_type);
 void ucm_mmap_init();
+
+
+/**
+ * Memory hooks mode names.
+ */
+extern const char *ucm_mmap_hook_modes[];
+
 
 static UCS_F_ALWAYS_INLINE ucm_mmap_hook_mode_t ucm_mmap_hook_mode(void)
 {

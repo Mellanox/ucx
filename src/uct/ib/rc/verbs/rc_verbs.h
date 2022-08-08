@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -17,8 +17,8 @@
       if (status != UCS_OK) { \
           return 0; \
       } \
-      UCS_STATS_UPDATE_COUNTER((_iface)->stats, \
-                               UCT_RC_IFACE_STAT_TX_COMPLETION, _num_wcs); \
+      UCS_STATS_UPDATE_COUNTER((_iface)->super.stats, \
+                               UCT_IB_IFACE_STAT_TX_COMPLETION, _num_wcs); \
       for (_i = 0; _i < _num_wcs; ++_i)
 
 
@@ -35,10 +35,17 @@ enum {
 };
 
 
-typedef struct uct_rc_verbs_ep_address {
+typedef struct uct_rc_verbs_ep_addr {
     uint8_t          flags;
     uct_ib_uint24_t  qp_num;
-} UCS_S_PACKED uct_rc_verbs_ep_address_t;
+} UCS_S_PACKED uct_rc_verbs_ep_addr_t;
+
+
+typedef struct uct_rc_verbs_ep_flush_addr {
+    uct_rc_verbs_ep_addr_t super;
+    uint8_t                atomic_mr_id;
+    uint16_t               flush_rkey_hi;
+} UCS_S_PACKED uct_rc_verbs_ep_flush_addr_t;
 
 
 typedef struct uct_rc_verbs_txcnt {
@@ -159,6 +166,8 @@ ucs_status_t uct_rc_verbs_ep_flush(uct_ep_h tl_ep, unsigned flags,
 ucs_status_t uct_rc_verbs_ep_fence(uct_ep_h tl_ep, unsigned flags);
 
 void uct_rc_verbs_ep_post_check(uct_ep_h tl_ep);
+
+void uct_rc_verbs_ep_vfs_populate(uct_rc_ep_t *rc_ep);
 
 ucs_status_t uct_rc_verbs_ep_fc_ctrl(uct_ep_t *tl_ep, unsigned op,
                                      uct_rc_pending_req_t *req);

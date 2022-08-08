@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
  * Copyright (c) UT-Battelle, LLC. 2014-2015. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
@@ -16,6 +16,7 @@
 #include <ucs/debug/log.h>
 #include <ucs/sys/sys.h>
 #include <ucm/api/ucm.h>
+#include <ucs/vfs/base/vfs_obj.h>
 
 
 #define UCT_KNEM_MD_MEM_DEREG_CHECK_PARAMS(_params) \
@@ -131,7 +132,8 @@ static ucs_status_t uct_knem_mem_reg_internal(uct_md_h md, void *address, size_t
             /* do not report error in silent mode: it called from rcache
              * internals, rcache will try to register memory again with
              * more accurate data */
-            ucs_error("KNEM create region failed: %m");
+            ucs_error("KNEM failed to create region address %p length %zi: %m",
+                      address, length);
         }
         return UCS_ERR_IO_ERROR;
     }
@@ -144,8 +146,10 @@ static ucs_status_t uct_knem_mem_reg_internal(uct_md_h md, void *address, size_t
 }
 
 static ucs_status_t uct_knem_mem_reg(uct_md_h md, void *address, size_t length,
-                                     unsigned flags, uct_mem_h *memh_p)
+                                     const uct_md_mem_reg_params_t *params,
+                                     uct_mem_h *memh_p)
 {
+    uint64_t flags = UCT_MD_MEM_REG_FIELD_VALUE(params, flags, FIELD_FLAGS, 0);
     uct_knem_key_t *key;
     ucs_status_t status;
 
@@ -199,11 +203,14 @@ static ucs_status_t uct_knem_mem_dereg(uct_md_h md,
     return status;
 }
 
-static ucs_status_t uct_knem_rkey_pack(uct_md_h md, uct_mem_h memh,
-                                       void *rkey_buffer)
+static ucs_status_t
+uct_knem_rkey_pack(uct_md_h md, uct_mem_h memh,
+                   const uct_md_mkey_pack_params_t *params,
+                   void *rkey_buffer)
 {
-    uct_knem_key_t *packed = (uct_knem_key_t*)rkey_buffer;
-    uct_knem_key_t *key = (uct_knem_key_t *)memh;
+    uct_knem_key_t *packed = rkey_buffer;
+    uct_knem_key_t *key    = memh;
+
     packed->cookie  = (uint64_t)key->cookie;
     packed->address = (uintptr_t)key->address;
     ucs_trace("packed rkey: cookie 0x%"PRIx64" address %"PRIxPTR,
@@ -223,6 +230,7 @@ static ucs_status_t uct_knem_rkey_unpack(uct_component_t *component,
         ucs_error("Failed to allocate memory for uct_knem_key_t");
         return UCS_ERR_NO_MEMORY;
     }
+
     key->cookie = packed->cookie;
     key->address = packed->address;
     *handle_p = NULL;
@@ -254,10 +262,13 @@ static inline uct_knem_rcache_region_t* uct_knem_rcache_region_from_memh(uct_mem
     return ucs_container_of(memh, uct_knem_rcache_region_t, key);
 }
 
-static ucs_status_t uct_knem_mem_rcache_reg(uct_md_h uct_md, void *address,
-                                            size_t length, unsigned flags,
-                                            uct_mem_h *memh_p)
+static ucs_status_t
+uct_knem_mem_rcache_reg(uct_md_h uct_md, void *address, size_t length,
+                        const uct_md_mem_reg_params_t *params,
+                        uct_mem_h *memh_p)
 {
+    uint64_t flags    = UCT_MD_MEM_REG_FIELD_VALUE(params, flags, FIELD_FLAGS,
+                                                   0);
     uct_knem_md_t *md = ucs_derived_of(uct_md, uct_knem_md_t);
     ucs_rcache_region_t *rregion;
     ucs_status_t status;
@@ -362,7 +373,7 @@ uct_knem_md_open(uct_component_t *component, const char *md_name,
     knem_md->knem_fd = open("/dev/knem", O_RDWR);
     if (knem_md->knem_fd < 0) {
         ucs_error("Could not open the KNEM device file at /dev/knem: %m.");
-        free(knem_md);
+        ucs_free(knem_md);
         return UCS_ERR_IO_ERROR;
     }
 
@@ -373,13 +384,12 @@ uct_knem_md_open(uct_component_t *component, const char *md_name,
         rcache_params.ucm_events         = UCM_EVENT_VM_UNMAPPED;
         rcache_params.context            = knem_md;
         rcache_params.ops                = &uct_knem_rcache_ops;
-        rcache_params.flags              = UCS_RCACHE_FLAG_PURGE_ON_FORK;
         status = ucs_rcache_create(&rcache_params, "knem", ucs_stats_get_root(),
                                    &knem_md->rcache);
         if (status == UCS_OK) {
             knem_md->super.ops = &uct_knem_md_rcache_ops;
-            knem_md->reg_cost  = ucs_linear_func_make(md_config->rcache.overhead,
-                                                      0);
+            knem_md->reg_cost  = ucs_linear_func_make(
+                                 uct_md_rcache_overhead(&md_config->rcache), 0);
         } else {
             ucs_assert(knem_md->rcache == NULL);
             if (md_config->rcache_enable == UCS_YES) {
@@ -398,6 +408,15 @@ uct_knem_md_open(uct_component_t *component, const char *md_name,
     return UCS_OK;
 }
 
+static void uct_knem_md_vfs_init(uct_md_h md)
+{
+    uct_knem_md_t *knem_md = (uct_knem_md_t*)md;
+
+    if (knem_md->rcache != NULL) {
+        ucs_vfs_obj_add_sym_link(md, knem_md->rcache, "rcache");
+    }
+}
+
 uct_component_t uct_knem_component = {
     .query_md_resources = uct_knem_query_md_resources,
     .md_open            = uct_knem_md_open,
@@ -414,6 +433,6 @@ uct_component_t uct_knem_component = {
     },
     .cm_config          = UCS_CONFIG_EMPTY_GLOBAL_LIST_ENTRY,
     .tl_list            = UCT_COMPONENT_TL_LIST_INITIALIZER(&uct_knem_component),
-    .flags              = 0
+    .flags              = 0,
+    .md_vfs_init        = uct_knem_md_vfs_init
 };
-UCT_COMPONENT_REGISTER(&uct_knem_component);

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2017-2019.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2017-2019. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -25,6 +25,21 @@ static ucs_config_field_t uct_cuda_copy_md_config_table[] = {
     {"", "", NULL,
         ucs_offsetof(uct_cuda_copy_md_config_t, super), UCS_CONFIG_TYPE_TABLE(uct_md_config_table)},
 
+    {"REG_WHOLE_ALLOC", "auto",
+     "Allow registration of whole allocation\n"
+     " auto - Let runtime decide where whole allocation registration is turned on.\n"
+     "        By default this will be turned off for limited BAR GPUs (eg. T4)\n"
+     " on   - Whole allocation registration is always turned on.\n"
+     " off  - Whole allocation registration is always turned off.",
+     ucs_offsetof(uct_cuda_copy_md_config_t, alloc_whole_reg),
+     UCS_CONFIG_TYPE_ON_OFF_AUTO},
+
+    {"MAX_REG_RATIO", "0.1",
+     "If the ratio of the length of the allocation to which the user buffer belongs to"
+     " to the total GPU memory capacity is below this ratio, then the whole allocation"
+     " is registered. Otherwise only the user specified region is registered.",
+     ucs_offsetof(uct_cuda_copy_md_config_t, max_reg_ratio), UCS_CONFIG_TYPE_DOUBLE},
+
     {NULL}
 };
 
@@ -43,13 +58,15 @@ static ucs_status_t uct_cuda_copy_md_query(uct_md_h md, uct_md_attr_t *md_attr)
     md_attr->cap.max_alloc        = SIZE_MAX;
     md_attr->cap.max_reg          = ULONG_MAX;
     md_attr->rkey_packed_size     = 0;
-    md_attr->reg_cost             = ucs_linear_func_make(0, 0);
+    md_attr->reg_cost             = UCS_LINEAR_FUNC_ZERO;
     memset(&md_attr->local_cpus, 0xff, sizeof(md_attr->local_cpus));
     return UCS_OK;
 }
 
-static ucs_status_t uct_cuda_copy_mkey_pack(uct_md_h md, uct_mem_h memh,
-                                            void *rkey_buffer)
+static ucs_status_t
+uct_cuda_copy_mkey_pack(uct_md_h md, uct_mem_h memh,
+                        const uct_md_mkey_pack_params_t *params,
+                        void *rkey_buffer)
 {
     return UCS_OK;
 }
@@ -71,19 +88,15 @@ static ucs_status_t uct_cuda_copy_rkey_release(uct_component_t *component,
 }
 
 UCS_PROFILE_FUNC(ucs_status_t, uct_cuda_copy_mem_reg,
-                 (md, address, length, flags, memh_p),
+                 (md, address, length, params, memh_p),
                  uct_md_h md, void *address, size_t length,
-                 unsigned flags, uct_mem_h *memh_p)
+                 const uct_md_mem_reg_params_t *params, uct_mem_h *memh_p)
 {
+    uint64_t flags = UCT_MD_MEM_REG_FIELD_VALUE(params, flags, FIELD_FLAGS, 0);
     ucs_log_level_t log_level;
     CUmemorytype memType;
     CUresult result;
     ucs_status_t status;
-
-    if (address == NULL) {
-        *memh_p = address;
-        return UCS_OK;
-    }
 
     result = cuPointerGetAttribute(&memType, CU_POINTER_ATTRIBUTE_MEMORY_TYPE,
                                    (CUdeviceptr)(address));
@@ -140,15 +153,14 @@ static ucs_status_t uct_cuda_copy_mem_alloc(uct_md_h md, size_t *length_p,
                                             uct_mem_h *memh_p)
 {
     ucs_status_t status;
-    int active;
 
     if ((mem_type != UCS_MEMORY_TYPE_CUDA_MANAGED) &&
         (mem_type != UCS_MEMORY_TYPE_CUDA)) {
         return UCS_ERR_UNSUPPORTED;
     }
 
-    UCT_CUDADRV_CTX_ACTIVE(active);
-    if (!active) {
+    if (!uct_cuda_base_is_context_active()) {
+        ucs_error("attempt to allocate cuda memory without active context");
         return UCS_ERR_NO_DEVICE;
     }
 
@@ -156,7 +168,7 @@ static ucs_status_t uct_cuda_copy_mem_alloc(uct_md_h md, size_t *length_p,
         status = UCT_CUDADRV_FUNC_LOG_ERR(cuMemAlloc((CUdeviceptr*)address_p,
                                                      *length_p));
     } else {
-        status = 
+        status =
             UCT_CUDADRV_FUNC_LOG_ERR(cuMemAllocManaged((CUdeviceptr*)address_p,
                                                        *length_p,
                                                        CU_MEM_ATTACH_GLOBAL));
@@ -197,8 +209,10 @@ static uct_md_ops_t md_ops = {
 
 static ucs_status_t
 uct_cuda_copy_md_open(uct_component_t *component, const char *md_name,
-                      const uct_md_config_t *config, uct_md_h *md_p)
+                      const uct_md_config_t *md_config, uct_md_h *md_p)
 {
+    uct_cuda_copy_md_config_t *config = ucs_derived_of(md_config,
+                                                       uct_cuda_copy_md_config_t);
     uct_cuda_copy_md_t *md;
 
     md = ucs_malloc(sizeof(uct_cuda_copy_md_t), "uct_cuda_copy_md_t");
@@ -207,9 +221,12 @@ uct_cuda_copy_md_open(uct_component_t *component, const char *md_name,
         return UCS_ERR_NO_MEMORY;
     }
 
-    md->super.ops       = &md_ops;
-    md->super.component = &uct_cuda_copy_component;
-    *md_p               = (uct_md_h)md;
+    md->super.ops              = &md_ops;
+    md->super.component        = &uct_cuda_copy_component;
+    md->config.alloc_whole_reg = config->alloc_whole_reg;
+    md->config.max_reg_ratio   = config->max_reg_ratio;
+    *md_p                      = (uct_md_h)md;
+
     return UCS_OK;
 }
 
@@ -229,7 +246,7 @@ uct_component_t uct_cuda_copy_component = {
     },
     .cm_config          = UCS_CONFIG_EMPTY_GLOBAL_LIST_ENTRY,
     .tl_list            = UCT_COMPONENT_TL_LIST_INITIALIZER(&uct_cuda_copy_component),
-    .flags              = 0
+    .flags              = 0,
+    .md_vfs_init        = (uct_component_md_vfs_init_func_t)ucs_empty_function
 };
 UCT_COMPONENT_REGISTER(&uct_cuda_copy_component);
-

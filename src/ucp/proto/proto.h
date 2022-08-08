@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2021.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2021. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -19,7 +19,7 @@
 
 
 /* Maximal number of protocol performance ranges */
-#define UCP_PROTO_MAX_PERF_RANGES   32
+#define UCP_PROTO_MAX_PERF_RANGES 24
 
 
 /* Maximal size of protocol private data */
@@ -34,8 +34,16 @@
 #define UCP_PROTO_ID_INVALID        ((ucp_proto_id_t)-1)
 
 
-/** Maximal length of ucp_proto_config_str_func_t output */
-#define UCP_PROTO_CONFIG_STR_MAX 128
+/* Threshold for considering two performance values as equal */
+#define UCP_PROTO_PERF_EPSILON     1e-15
+
+
+/* Maximal length of protocol description string */
+#define UCP_PROTO_DESC_STR_MAX      64
+
+
+/* Maximal length of protocol configuration string */
+#define UCP_PROTO_CONFIG_STR_MAX    128
 
 
 /* Protocol identifier */
@@ -44,6 +52,10 @@ typedef unsigned ucp_proto_id_t;
 
 /* Bitmap of protocols */
 typedef uint64_t ucp_proto_id_mask_t;
+
+
+/* Performance calculation tree node */
+typedef struct ucp_proto_perf_node ucp_proto_perf_node_t;
 
 
 /* Protocol stage ID */
@@ -73,41 +85,75 @@ enum {
  */
 typedef struct {
     uint8_t                 op_id;      /* Operation ID */
-    uint8_t                 op_flags;   /* Operation flags */
+    uint16_t                op_flags;   /* Operation flags */
     uint8_t                 dt_class;   /* Datatype */
     uint8_t                 mem_type;   /* Memory type */
     uint8_t                 sys_dev;    /* System device */
     uint8_t                 sg_count;   /* Number of non-contig scatter/gather
                                            entries. If the actual number is larger
                                            than UINT8_MAX, UINT8_MAX is used. */
-    uint8_t                 padding[2]; /* Make structure size be sizeof(uint64_t) */
+    uint8_t                 padding;    /* Make structure size be
+                                           sizeof(uint64_t) */
 } UCS_S_PACKED ucp_proto_select_param_t;
 
 
-/**
- * Protocol and its private configuration
+/*
+ * Some protocols can be pipelined, so the time they consume when multiple
+ * such operations are issued is less than their cumulative time. Therefore we
+ * define two metrics: "single" operation time and "multi" operation time.
+ *
+ * -------time---------->
+ *
+ *        +-------------------------+
+ * op1:   |   "single" time         |
+ *        +---------------+---------+---------------+
+ *                op2:    | overlap | "multi" time  |
+ *                        +---------+-----+---------+---------------+
+ *                                op3:    | overlap | "multi" time  |
+ *                                        +---------+---------------+
  */
-typedef struct {
-    const ucp_proto_t        *proto;       /* Protocol definition */
-    const void               *priv;        /* Protocol private configuration space */
-    ucp_worker_cfg_index_t   ep_cfg_index; /* Endpoint configuration index this
-                                              protocol was selected on */
-    ucp_worker_cfg_index_t   rkey_cfg_index; /* Remote key configuration index
-                                                this protocol was elected on
-                                                (can be UCP_WORKER_CFG_INDEX_NULL) */
-    ucp_proto_select_param_t select_param; /* Copy of protocol selection parameters,
-                                              used to re-select protocol for existing
-                                              in-progress request */
-} ucp_proto_config_t;
+typedef enum {
+    UCP_PROTO_PERF_TYPE_FIRST,
+
+    /* Time to complete this operation assuming it's the only one. */
+    UCP_PROTO_PERF_TYPE_SINGLE = UCP_PROTO_PERF_TYPE_FIRST,
+
+    /* Time to complete this operation after all previous ones complete. */
+    UCP_PROTO_PERF_TYPE_MULTI,
+
+    /* CPU time the operation consumes (it would be less than or equal to the
+     * SINGLE and MULTI times).
+     */
+    UCP_PROTO_PERF_TYPE_CPU,
+
+    UCP_PROTO_PERF_TYPE_LAST
+} ucp_proto_perf_type_t;
 
 
 /*
- * Performance estimation for a range of message sizes
+ * Iterate over performance types.
+ *
+ * @param _perf_type  Performance type iterator variable.
+ */
+#define UCP_PROTO_PERF_TYPE_FOREACH(_perf_type) \
+    for (_perf_type = UCP_PROTO_PERF_TYPE_FIRST; \
+         _perf_type < UCP_PROTO_PERF_TYPE_LAST; ++(_perf_type))
+
+
+/*
+ * Performance estimation for a range of message sizes.
  */
 typedef struct {
-    size_t                  max_length; /* Maximal message size */
-    ucs_linear_func_t       perf;       /* Estimated time in seconds, as a
-                                           function of message size in bytes */
+    /* Maximal payload size for this range */
+    size_t                max_length;
+
+    /* Estimated time in seconds, as a function of message size in bytes, to
+     * complete the operation. See @ref ucp_proto_perf_type_t for details
+     */
+    ucs_linear_func_t     perf[UCP_PROTO_PERF_TYPE_LAST];
+
+    /* Performance data tree */
+    ucp_proto_perf_node_t *node;
 } ucp_proto_perf_range_t;
 
 
@@ -134,6 +180,8 @@ typedef struct {
     ucp_worker_h                   worker;           /* Worker to initialize on */
     const ucp_proto_select_param_t *select_param;    /* Operation parameters */
     ucp_worker_cfg_index_t         ep_cfg_index;     /* Endpoint configuration index */
+    ucp_worker_cfg_index_t         rkey_cfg_index;   /* Remote key configuration index,
+                                                        may be UCP_WORKER_CFG_INDEX_NULL */
     const ucp_ep_config_key_t      *ep_config_key;   /* Endpoint configuration */
     const ucp_rkey_config_key_t    *rkey_config_key; /* Remote key configuration,
                                                         may be NULL */
@@ -160,47 +208,89 @@ typedef ucs_status_t
 (*ucp_proto_init_func_t)(const ucp_proto_init_params_t *params);
 
 
+typedef struct {
+    /* Protocol definition */
+    const ucp_proto_t              *proto;
+
+    /* Protocol private configuration area */
+    const void                     *priv;
+
+    /* Worker on which the protocol was initialized */
+    ucp_worker_h                   worker;
+
+    /* Protocol selection parameters */
+    const ucp_proto_select_param_t *select_param;
+
+    /* Endpoint configuration */
+    const ucp_ep_config_key_t      *ep_config_key;
+
+    /* Get information about this message length */
+    size_t                         msg_length;
+} ucp_proto_query_params_t;
+
+
+typedef struct {
+    /* Maximal message size of the range started from 'msg_length' for
+       which the description and configuration information is relevant.
+       It must be > msg_length. */
+    size_t max_msg_length;
+
+    /* Whether the reported information is not definitive, and the actual used
+       protocol depends on remote side decision as well. */
+    int    is_estimation;
+
+    /* High-level description of what the protocol is doing in this range */
+    char   desc[UCP_PROTO_DESC_STR_MAX];
+
+    /* Protocol configuration in the range, such as devices and transports */
+    char   config[UCP_PROTO_CONFIG_STR_MAX];
+} ucp_proto_query_attr_t;
+
+
 /**
- * Dump protocol-specific configuration.
+ * Query protocol-specific information.
  *
- * @param [in]  min_length  Return information starting from this message length.
- * @param [in]  max_length  Return information up to this message length (inclusive).
- * @param [in]  priv        Protocol private data, which was previously filled by
- *                          @ref ucp_proto_init_func_t.
- * @param [out] strb        Protocol configuration text should be written to this
- *                          string buffer. This function should only **append**
- *                          data to the buffer, and should not initialize, release
- *                          or erase any data already in the buffer.
+ * @param [in]  params  Protocol information query parameters.
+ * @param [out] attr    Protocol information query output.
+ *
+ * @return Maximal message size for which the returned information is relevant.
  */
-typedef void (*ucp_proto_config_str_func_t)(size_t min_length,
-                                            size_t max_length, const void *priv,
-                                            ucs_string_buffer_t *strb);
+typedef void (*ucp_proto_query_func_t)(const ucp_proto_query_params_t *params,
+                                       ucp_proto_query_attr_t *attr);
+
+
+/**
+ * Abort UCP request at any stage with error status.
+ *
+ * @param [in]  request Request to abort.
+ * @param [in]  status  Error completion status.
+ */
+typedef void (*ucp_request_abort_func_t)(ucp_request_t *request,
+                                         ucs_status_t status);
 
 
 /**
  * UCP base protocol definition
  */
 struct ucp_proto {
-    const char                      *name;      /* Protocol name */
-    unsigned                        flags;      /* Protocol flags for special handling */
-    ucp_proto_init_func_t           init;       /* Initialization function */
-    ucp_proto_config_str_func_t     config_str; /* Configuration dump function */
+    const char               *name; /* Protocol name */
+    const char               *desc; /* Protocol description */
+    unsigned                 flags; /* Protocol flags for special handling */
+    ucp_proto_init_func_t    init;  /* Initialization function */
+    ucp_proto_query_func_t   query; /* Query protocol information */
 
     /* Initial UCT progress function, can be changed during the protocol
      * request lifetime to implement different stages
      */
-    uct_pending_callback_t          progress[UCP_PROTO_STAGE_LAST];
+    uct_pending_callback_t   progress[UCP_PROTO_STAGE_LAST];
+
+    /*
+     * Abort a request (which is currently not scheduled to a pending queue).
+     * The method should wait for UCT completions and release associated
+     * resources, such as memory handles, remote keys, request ID, etc.
+     */
+    ucp_request_abort_func_t abort;
 };
-
-
-/**
- * Register a protocol definition.
- */
-#define UCP_PROTO_REGISTER(_proto) \
-    UCS_STATIC_INIT { \
-        ucs_assert_always(ucp_protocols_count < UCP_PROTO_MAX_COUNT); \
-        ucp_protocols[ucp_protocols_count++] = (_proto); \
-    }
 
 
 /**
@@ -218,10 +308,37 @@ struct ucp_proto {
 
 
 /* Global array of all registered protocols */
-extern const ucp_proto_t *ucp_protocols[UCP_PROTO_MAX_COUNT];
+extern const ucp_proto_t *ucp_protocols[];
 
-/* Number of globally registered protocols */
-extern unsigned ucp_protocols_count;
 
+/* Operations names and descriptions */
+extern const char *ucp_operation_names[];
+extern const char *ucp_operation_descs[];
+
+
+/* Performance types names */
+extern const char *ucp_proto_perf_type_names[];
+
+
+/* Get number of globally registered protocols */
+unsigned ucp_protocols_count(void);
+
+
+/* Default protocol query function: set max_msg_length to SIZE_MAX, take
+   description from proto->desc, and set config to an empty string. */
+void ucp_proto_default_query(const ucp_proto_query_params_t *params,
+                             ucp_proto_query_attr_t *attr);
+
+
+void ucp_proto_perf_set(ucs_linear_func_t perf[UCP_PROTO_PERF_TYPE_LAST],
+                        ucs_linear_func_t func);
+
+
+void ucp_proto_perf_copy(ucs_linear_func_t dest[UCP_PROTO_PERF_TYPE_LAST],
+                         const ucs_linear_func_t src[UCP_PROTO_PERF_TYPE_LAST]);
+
+
+void ucp_proto_perf_add(ucs_linear_func_t perf[UCP_PROTO_PERF_TYPE_LAST],
+                        ucs_linear_func_t func);
 
 #endif

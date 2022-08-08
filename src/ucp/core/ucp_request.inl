@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -11,15 +11,17 @@
 #include "ucp_worker.h"
 #include "ucp_ep.inl"
 
-
-#include <ucp/core/ucp_worker.h>
 #include <ucp/dt/dt.h>
 #include <ucs/profile/profile.h>
 #include <ucs/datastruct/mpool.inl>
+#include <ucs/datastruct/mpool_set.inl>
 #include <ucs/datastruct/ptr_map.inl>
 #include <ucs/debug/debug_int.h>
 #include <ucp/dt/dt.inl>
 #include <inttypes.h>
+
+
+UCS_PTR_MAP_IMPL(request, 0);
 
 
 #define UCP_REQUEST_FLAGS_FMT \
@@ -68,6 +70,7 @@
         uint32_t _flags; \
         \
         ucs_assert(!((_req)->flags & UCP_REQUEST_FLAG_COMPLETED)); \
+        ucs_assert((_status) != UCS_INPROGRESS); \
         \
         _flags         = ((_req)->flags |= UCP_REQUEST_FLAG_COMPLETED); \
         (_req)->status = (_status); \
@@ -82,13 +85,20 @@
         } \
     }
 
-#define ucp_request_set_callback(_req, _cb, _cb_value, _user_data) \
+
+#define ucp_request_set_callback(_req, _cb, _cb_value) \
     { \
         (_req)->_cb       = _cb_value; \
-        (_req)->user_data = _user_data; \
         (_req)->flags    |= UCP_REQUEST_FLAG_CALLBACK; \
+    }
+
+
+#define ucp_request_set_user_callback(_req, _cb, _cb_value, _user_data) \
+    { \
+        ucp_request_set_callback(_req, _cb, _cb_value); \
+        (_req)->user_data = _user_data; \
         ucs_trace_data("request %p %s set to %p, user data: %p", \
-                      _req, #_cb, _cb_value, _user_data); \
+                       _req, #_cb, _cb_value, _user_data); \
     }
 
 
@@ -124,7 +134,8 @@
 
 #define ucp_request_cb_param(_param, _req, _cb, ...) \
     if ((_param)->op_attr_mask & UCP_OP_ATTR_FIELD_CALLBACK) { \
-        param->cb._cb(req + 1, (_req)->status, ##__VA_ARGS__, param->user_data); \
+        (_param)->cb._cb((_req) + 1, (_req)->status, ##__VA_ARGS__, \
+                         (_param)->user_data); \
     }
 
 
@@ -145,10 +156,12 @@
 
 #define ucp_request_set_callback_param(_param, _param_cb, _req, _req_cb) \
     if ((_param)->op_attr_mask & UCP_OP_ATTR_FIELD_CALLBACK) { \
-        ucp_request_set_callback(_req, _req_cb.cb, (_param)->cb._param_cb, \
-                                 ((_param)->op_attr_mask & \
-                                  UCP_OP_ATTR_FIELD_USER_DATA) ? \
-                                 (_param)->user_data : NULL); \
+        ucp_request_set_user_callback(_req, _req_cb.cb, \
+                                      (_param)->cb._param_cb, \
+                                      ((_param)->op_attr_mask & \
+                                       UCP_OP_ATTR_FIELD_USER_DATA) ? \
+                                              (_param)->user_data : \
+                                              NULL); \
     }
 
 
@@ -214,6 +227,10 @@ ucp_request_complete_send(ucp_request_t *req, ucs_status_t status)
                   req, req + 1, UCP_REQUEST_FLAGS_ARG(req->flags),
                   ucs_status_string(status));
     UCS_PROFILE_REQUEST_EVENT(req, "complete_send", status);
+    /* Coverity wrongly resolves completion callback function to
+     * 'ucp_cm_client_connect_progress'/'ucp_cm_server_conn_request_progress'
+     */
+    /* coverity[offset_free] */
     ucp_request_complete(req, send.cb, status, req->user_data);
 }
 
@@ -225,13 +242,13 @@ ucp_request_complete_tag_recv(ucp_request_t *req, ucs_status_t status)
                   req, req + 1, UCP_REQUEST_FLAGS_ARG(req->flags),
                   req->recv.tag.info.sender_tag, req->recv.tag.info.length,
                   ucs_status_string(status));
-    UCS_PROFILE_REQUEST_EVENT(req, "complete_recv", status);
+    UCS_PROFILE_REQUEST_EVENT(req, "complete_tag_recv", status);
     ucp_request_complete(req, recv.tag.cb, status, &req->recv.tag.info,
                          req->user_data);
 }
 
 static UCS_F_ALWAYS_INLINE void
-ucp_request_complete_stream_recv(ucp_request_t *req, ucp_ep_ext_proto_t* ep_ext,
+ucp_request_complete_stream_recv(ucp_request_t *req, ucp_ep_ext_t *ep_ext,
                                  ucs_status_t status)
 {
     /* dequeue request before complete */
@@ -246,7 +263,7 @@ ucp_request_complete_stream_recv(ucp_request_t *req, ucp_ep_ext_proto_t* ep_ext,
                   UCP_REQUEST_FLAGS_FMT " count %zu, %s",
                   req, req + 1, UCP_REQUEST_FLAGS_ARG(req->flags),
                   req->recv.stream.length, ucs_status_string(status));
-    UCS_PROFILE_REQUEST_EVENT(req, "complete_recv", status);
+    UCS_PROFILE_REQUEST_EVENT(req, "complete_stream_recv", status);
     ucp_request_complete(req, recv.stream.cb, status, req->recv.stream.length,
                          req->user_data);
 }
@@ -371,8 +388,8 @@ ucp_request_send_state_init(ucp_request_t *req, ucp_datatype_t datatype,
 
     VALGRIND_MAKE_MEM_UNDEFINED(&req->send.state.uct_comp,
                                 sizeof(req->send.state.uct_comp));
-    VALGRIND_MAKE_MEM_UNDEFINED(&req->send.state.dt.offset,
-                                sizeof(req->send.state.dt.offset));
+    VALGRIND_MAKE_MEM_UNDEFINED(&req->send.state.dt_iter.offset,
+                                sizeof(req->send.state.dt_iter.offset));
 
     req->send.state.uct_comp.func = NULL;
 
@@ -460,7 +477,7 @@ ucp_request_send_state_advance(ucp_request_t *req,
          */
         return;
     }
-    
+
     if (ucs_unlikely(UCS_STATUS_IS_ERR(status))) {
         ucp_request_send_state_ff(req, status);
         return;
@@ -534,7 +551,11 @@ ucp_send_request_add_reg_lane(ucp_request_t *req, ucp_lane_index_t lane)
     /* Add new lane to registration map */
     ucp_md_map_t md_map;
 
-    if (ucs_likely(UCP_DT_IS_CONTIG(req->send.datatype))) {
+    if (req->flags & UCP_REQUEST_FLAG_USER_MEMH) {
+        /* Do not force using the existing registration map if it's user memory
+           handle, since number of memory domains can exceed UCP_MAX_OP_MDS. */
+        md_map = 0;
+    } else if (ucs_likely(UCP_DT_IS_CONTIG(req->send.datatype))) {
         md_map = req->send.state.dt.dt.contig.md_map;
     } else if (UCP_DT_IS_IOV(req->send.datatype) &&
                (req->send.state.dt.dt.iov.dt_reg != NULL)) {
@@ -573,6 +594,109 @@ static UCS_F_ALWAYS_INLINE void ucp_request_recv_buffer_dereg(ucp_request_t *req
 {
     ucp_request_memory_dereg(req->recv.worker->context, req->recv.datatype,
                              &req->recv.state, req);
+}
+
+/* Copy UCT memory handles from memh to state->contig, according to md_map,
+   and up to UCP_MAX_OP_MDS */
+static UCS_F_ALWAYS_INLINE void
+ucp_request_init_dt_reg_from_memh(ucp_request_t *req, ucp_md_map_t md_map,
+                                  ucp_mem_h memh, ucp_dt_reg_t *dt_reg)
+{
+    ucp_md_index_t md_index, memh_index;
+
+    ucs_assertv(dt_reg->md_map == 0, "md_map=0x%" PRIx64, dt_reg->md_map);
+    ucs_assert((dt_reg == &req->send.state.dt.dt.contig) ||
+               (dt_reg == &req->recv.state.dt.contig));
+
+    req->flags |= UCP_REQUEST_FLAG_USER_MEMH;
+    memh_index  = 0;
+    ucs_for_each_bit(md_index, memh->md_map) {
+        if (md_map & UCS_BIT(md_index)) {
+            dt_reg->memh[memh_index++] = memh->uct[md_index];
+            dt_reg->md_map            |= UCS_BIT(md_index);
+            if (memh_index >= UCP_MAX_OP_MDS) {
+                break;
+            }
+        }
+    }
+}
+
+/* Returns whether user-provided memory handle can be used. If the result is 0,
+   *status_p is set to the error code. */
+static UCS_F_ALWAYS_INLINE int
+ucp_request_is_user_memh_valid(ucp_request_t *req,
+                               const ucp_request_param_t *param, void *buffer,
+                               size_t length, ucp_datatype_t datatype,
+                               ucs_memory_type_t mem_type,
+                               ucs_status_t *status_p)
+{
+    /* User-provided memh supported only on contig type with proto_v1 */
+    if (!(param->op_attr_mask & UCP_OP_ATTR_FIELD_MEMH) ||
+        !UCP_DT_IS_CONTIG(datatype)) {
+        *status_p = UCS_OK;
+        return 0;
+    }
+
+    if (ENABLE_PARAMS_CHECK &&
+        ((param->memh == NULL) || (buffer < ucp_memh_address(param->memh)) ||
+         (UCS_PTR_BYTE_OFFSET(buffer, length) >
+          UCS_PTR_BYTE_OFFSET(ucp_memh_address(param->memh),
+                              ucp_memh_length(param->memh))) ||
+         (param->memh->mem_type != mem_type))) {
+        ucs_error("req %p: mismatched memory handle [buffer %p length %zu %s]"
+                  " memh %p [address %p length %zu %s]",
+                  req, buffer, length, ucs_memory_type_names[mem_type],
+                  param->memh, ucp_memh_address(param->memh),
+                  ucp_memh_length(param->memh),
+                  ucs_memory_type_names[param->memh->mem_type]);
+        *status_p = UCS_ERR_INVALID_PARAM;
+        return 0;
+    }
+
+    ucs_assert(param->memh != NULL); /* For Coverity */
+    return 1;
+}
+
+static UCS_F_ALWAYS_INLINE ucs_status_t
+ucp_send_request_set_user_memh(ucp_request_t *req, ucp_md_map_t md_map,
+                               const ucp_request_param_t *param)
+{
+    ucs_status_t status;
+
+    if (!ucp_request_is_user_memh_valid(req, param, req->send.buffer,
+                                        req->send.length, req->send.datatype,
+                                        (ucs_memory_type_t)req->send.mem_type,
+                                        &status)) {
+        return status;
+    }
+
+    /* req->send.state.dt should not be used with protov2 */
+    ucs_assert(!req->send.ep->worker->context->config.ext.proto_enable);
+
+    ucs_assert(!(req->flags & UCP_REQUEST_FLAG_USER_MEMH));
+    ucp_request_init_dt_reg_from_memh(req, md_map, param->memh,
+                                      &req->send.state.dt.dt.contig);
+    return UCS_OK;
+}
+
+static UCS_F_ALWAYS_INLINE ucs_status_t
+ucp_recv_request_set_user_memh(ucp_request_t *req,
+                               const ucp_request_param_t *param)
+{
+    ucs_status_t status;
+
+    if (!ucp_request_is_user_memh_valid(req, param, req->recv.buffer,
+                                        req->recv.length, req->recv.datatype,
+                                        req->recv.mem_type, &status)) {
+        return status;
+    }
+
+    ucs_assert(!(req->flags & UCP_REQUEST_FLAG_USER_MEMH));
+    req->flags         |= UCP_REQUEST_FLAG_USER_MEMH;
+    req->recv.user_memh = param->memh;
+    /* dt_reg will be updated later if the protocol needs it */
+
+    return UCS_OK;
 }
 
 static UCS_F_ALWAYS_INLINE void
@@ -639,10 +763,12 @@ ucp_request_recv_data_unpack(ucp_request_t *req, const void *data,
                             &req->recv.state.dt.iov.iovcnt_offset);
             req->recv.state.offset = offset;
         }
-        UCS_PROFILE_CALL(ucp_dt_iov_scatter, (ucp_dt_iov_t*)req->recv.buffer,
+        UCS_PROFILE_CALL(ucp_dt_iov_scatter, req->recv.worker,
+                         (ucp_dt_iov_t*)req->recv.buffer,
                          req->recv.state.dt.iov.iovcnt, data, length,
                          &req->recv.state.dt.iov.iov_offset,
-                         &req->recv.state.dt.iov.iovcnt_offset);
+                         &req->recv.state.dt.iov.iovcnt_offset,
+                         req->recv.mem_type);
         req->recv.state.offset += length;
         return UCS_OK;
 
@@ -662,11 +788,19 @@ ucp_request_recv_data_unpack(ucp_request_t *req, const void *data,
     }
 }
 
+static UCS_F_ALWAYS_INLINE void
+ucp_recv_desc_set_name(ucp_recv_desc_t *rdesc, const char *name)
+{
+#if ENABLE_DEBUG_DATA
+    rdesc->name = name;
+#endif
+}
+
 static UCS_F_ALWAYS_INLINE ucs_status_t
 ucp_recv_desc_init(ucp_worker_h worker, void *data, size_t length,
                    int data_offset, unsigned am_flags, uint16_t hdr_len,
                    uint16_t rdesc_flags, int priv_length, size_t alignment,
-                   ucp_recv_desc_t **rdesc_p)
+                   const char *name, ucp_recv_desc_t **rdesc_p)
 {
     ucp_recv_desc_t *rdesc;
     void *data_hdr;
@@ -682,13 +816,15 @@ ucp_recv_desc_init(ucp_worker_h worker, void *data, size_t length,
         rdesc->release_desc_offset = UCP_WORKER_HEADROOM_PRIV_SIZE - priv_length;
         status                     = UCS_INPROGRESS;
     } else {
-        rdesc = (ucp_recv_desc_t*)ucs_mpool_get_inline(&worker->am_mp);
+        rdesc = (ucp_recv_desc_t*)ucs_mpool_set_get_inline(&worker->am_mps,
+                                                           length);
         if (rdesc == NULL) {
+            *rdesc_p = NULL; /* To suppress compiler warning */
             ucs_error("ucp recv descriptor is not allocated");
             return UCS_ERR_NO_MEMORY;
         }
 
-        padding = ucs_padding((uintptr_t)(rdesc + 1), worker->am.alignment);
+        padding = ucs_padding((uintptr_t)(rdesc + 1), alignment);
         rdesc   = (ucp_recv_desc_t*)UCS_PTR_BYTE_OFFSET(rdesc, padding);
         rdesc->release_desc_offset = padding;
 
@@ -699,6 +835,7 @@ ucp_recv_desc_init(ucp_worker_h worker, void *data, size_t length,
         memcpy(UCS_PTR_BYTE_OFFSET(rdesc + 1, data_offset), data, length);
     }
 
+    ucp_recv_desc_set_name(rdesc, name);
     rdesc->length         = length + data_offset;
     rdesc->payload_offset = hdr_len;
     *rdesc_p              = rdesc;
@@ -716,7 +853,7 @@ ucp_recv_desc_release(ucp_recv_desc_t *rdesc)
         /* uct desc is slowpath */
         uct_iface_release_desc(desc);
     } else {
-        ucs_mpool_put_inline(desc);
+        ucs_mpool_set_put_inline(desc);
     }
 }
 
@@ -727,7 +864,7 @@ ucp_request_complete_am_recv(ucp_request_t *req, ucs_status_t status)
                   " length %zu, %s",
                   req, req + 1, UCP_REQUEST_FLAGS_ARG(req->flags),
                   req->recv.length, ucs_status_string(status));
-    UCS_PROFILE_REQUEST_EVENT(req, "complete_recv", status);
+    UCS_PROFILE_REQUEST_EVENT(req, "complete_am_recv", status);
 
     if (req->recv.am.desc->flags & UCP_RECV_DESC_FLAG_AM_CB_INPROGRESS) {
         /* Descriptor is not initialized by UCT yet, therefore can not call
@@ -739,10 +876,17 @@ ucp_request_complete_am_recv(ucp_request_t *req, ucs_status_t status)
         ucp_recv_desc_release(req->recv.am.desc);
     }
 
+    /* Coverity wrongly resolves completion callback function to
+     * 'ucp_cm_server_conn_request_progress' */
+    /* coverity[offset_free] */
     ucp_request_complete(req, recv.am.cb, status, req->recv.length,
                          req->user_data);
 }
 
+/*
+ * process data, complete receive if done
+ * @return UCS_OK/ERR - completed, UCS_INPROGRESS - not completed
+ */
 static UCS_F_ALWAYS_INLINE ucs_status_t
 ucp_request_process_recv_data(ucp_request_t *req, const void *data,
                               size_t length, size_t offset, int is_zcopy,
@@ -851,24 +995,12 @@ ucp_request_get_memory_type(ucp_context_h context, const void *address,
 }
 
 static UCS_F_ALWAYS_INLINE void
-ucp_ep_ptr_map_check_status(ucp_ep_h ep, void *ptr, const char *action_str,
-                            ucs_status_t status)
+ucp_request_ptr_map_status_check(ucs_status_t status, const char *action_str,
+                                 ucp_ep_h ep, void *ptr)
 {
     ucs_assertv((status == UCS_OK) || (status == UCS_ERR_NO_PROGRESS),
                 "ep %p: failed to %s id for %p: %s", ep, action_str, ptr,
                 ucs_status_string(status));
-}
-
-static UCS_F_ALWAYS_INLINE ucs_status_t
-ucp_ep_ptr_id_alloc(ucp_ep_h ep, void *ptr, ucs_ptr_map_key_t *ptr_id_p)
-{
-    ucs_status_t status;
-
-    status = ucs_ptr_map_put(&ep->worker->ptr_map, ptr,
-                             ucp_ep_use_indirect_id(ep), ptr_id_p);
-    ucp_ep_ptr_map_check_status(ep, ptr, "allocate", status);
-
-    return status;
 }
 
 static UCS_F_ALWAYS_INLINE void ucp_send_request_id_alloc(ucp_request_t *req)
@@ -877,10 +1009,12 @@ static UCS_F_ALWAYS_INLINE void ucp_send_request_id_alloc(ucp_request_t *req)
     ucs_status_t status;
 
     ucp_request_id_check(req, ==, UCS_PTR_MAP_KEY_INVALID);
-    status = ucp_ep_ptr_id_alloc(ep, req, &req->id);
+    status = UCS_PTR_MAP_PUT(request, &ep->worker->request_map, req,
+                             ucp_ep_use_indirect_id(ep), &req->id);
+    ucp_request_ptr_map_status_check(status, "put", ep, req);
+
     if (status == UCS_OK) {
-        ucs_hlist_add_tail(&ucp_ep_ext_gen(ep)->proto_reqs,
-                           &req->send.list);
+        ucs_hlist_add_tail(&ep->ext->proto_reqs, &req->send.list);
     }
 }
 
@@ -903,12 +1037,13 @@ static UCS_F_ALWAYS_INLINE void ucp_send_request_id_release(ucp_request_t *req)
                  (UCP_REQUEST_FLAG_RECV_AM | UCP_REQUEST_FLAG_RECV_TAG)));
     ep = req->send.ep;
 
-    status = ucs_ptr_map_del(&ep->worker->ptr_map, req->id);
+    status = UCS_PTR_MAP_DEL(request, &ep->worker->request_map, req->id);
+    ucp_request_ptr_map_status_check(status, "delete", ep, req);
+
     if (status == UCS_OK) {
-        ucs_hlist_del(&ucp_ep_ext_gen(ep)->proto_reqs, &req->send.list);
+        ucs_hlist_del(&ep->ext->proto_reqs, &req->send.list);
     }
 
-    ucp_ep_ptr_map_check_status(ep, req, "release", status);
     ucp_request_id_reset(req);
 }
 
@@ -921,8 +1056,9 @@ ucp_send_request_get_by_id(ucp_worker_h worker, ucs_ptr_map_key_t id,
 
     ucs_assert(id != UCS_PTR_MAP_KEY_INVALID);
 
-    status = ucs_ptr_map_get(&worker->ptr_map, id, extract, &ptr);
+    status = UCS_PTR_MAP_GET(request, &worker->request_map, id, extract, &ptr);
     if (ucs_unlikely((status != UCS_OK) && (status != UCS_ERR_NO_PROGRESS))) {
+        *req_p = NULL; /* To suppress compiler warning */
         return status;
     }
 
@@ -936,8 +1072,8 @@ ucp_send_request_get_by_id(ucp_worker_h worker, ucs_ptr_map_key_t id,
         ucp_request_id_reset(*req_p);
 
         if (status == UCS_OK) {
-            ucs_hlist_del(&ucp_ep_ext_gen((*req_p)->send.ep)->proto_reqs,
-                                          &(*req_p)->send.list);
+            ucs_hlist_del(&((*req_p)->send.ep->ext->proto_reqs),
+                          &(*req_p)->send.list);
         }
     }
 
@@ -966,6 +1102,17 @@ ucp_request_get_super(ucp_request_t *req)
     return req->super_req;
 }
 
+static UCS_F_ALWAYS_INLINE ucp_request_t *
+ucp_request_user_data_get_super(void *request, void *user_data)
+{
+    ucp_request_t UCS_V_UNUSED *req = (ucp_request_t*)request - 1;
+    ucp_request_t *super_req        = (ucp_request_t*)user_data;
+
+    ucs_assert(super_req != NULL);
+    ucs_assert(ucp_request_get_super(req) == super_req);
+    return super_req;
+}
+
 static UCS_F_ALWAYS_INLINE void
 ucp_request_param_rndv_thresh(ucp_request_t *req,
                               const ucp_request_param_t *param,
@@ -986,6 +1133,9 @@ ucp_request_param_rndv_thresh(ucp_request_t *req,
 static UCS_F_ALWAYS_INLINE void
 ucp_invoke_uct_completion(uct_completion_t *comp, ucs_status_t status)
 {
+    ucs_assertv(comp->count > 0, "comp=%p count=%d func=%p status %s", comp,
+                comp->count, comp->func, ucs_status_string(status));
+
     uct_completion_update_status(comp, status);
     if (--comp->count == 0) {
         comp->func(comp);

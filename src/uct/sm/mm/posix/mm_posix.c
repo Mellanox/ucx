@@ -1,6 +1,6 @@
 /**
  * Copyright (c) UT-Battelle, LLC. 2014-2015. ALL RIGHTS RESERVED.
- * Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
  * Copyright (C) ARM Ltd. 2016.  ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
@@ -14,8 +14,10 @@
 #include <ucs/debug/memtrack_int.h>
 #include <ucs/debug/log.h>
 #include <ucs/sys/string.h>
-#include <sys/mman.h>
+#include <ucs/profile/profile.h>
 #include <ucs/sys/sys.h>
+#include <sys/mman.h>
+#include <sys/statvfs.h>
 
 
 /* File open flags */
@@ -114,9 +116,20 @@ static size_t uct_posix_iface_addr_length(uct_mm_md_t *md)
 
 static ucs_status_t uct_posix_md_query(uct_md_h tl_md, uct_md_attr_t *md_attr)
 {
-    uct_mm_md_t *md = ucs_derived_of(tl_md, uct_mm_md_t);
+    uct_mm_md_t *md                           = ucs_derived_of(tl_md, uct_mm_md_t);
+    const uct_posix_md_config_t *posix_config =
+                    ucs_derived_of(md->config, uct_posix_md_config_t);
+    struct statvfs shm_statvfs;
 
-    uct_mm_md_query(&md->super, md_attr, 1);
+    if (statvfs(posix_config->dir, &shm_statvfs) < 0) {
+        ucs_error("could not stat shared memory device %s (%m)",
+                  UCT_POSIX_SHM_OPEN_DIR);
+        return UCS_ERR_NO_DEVICE;
+    }
+
+    uct_mm_md_query(&md->super, md_attr,
+                    shm_statvfs.f_bsize * shm_statvfs.f_bavail);
+
     md_attr->rkey_packed_size = sizeof(uct_posix_packed_rkey_t) +
                                 uct_posix_iface_addr_length(md);
     return UCS_OK;
@@ -595,10 +608,12 @@ static ucs_status_t uct_posix_iface_addr_pack(uct_mm_md_t *md, void *buffer)
 }
 
 static ucs_status_t
-uct_posix_md_mkey_pack(uct_md_h tl_md, uct_mem_h memh, void *rkey_buffer)
+uct_posix_md_mkey_pack(uct_md_h tl_md, uct_mem_h memh,
+                       const uct_md_mkey_pack_params_t *params,
+                       void *rkey_buffer)
 {
-    uct_mm_md_t                      *md = ucs_derived_of(tl_md, uct_mm_md_t);
-    uct_mm_seg_t                    *seg = memh;
+    uct_mm_md_t *md                      = ucs_derived_of(tl_md, uct_mm_md_t);
+    uct_mm_seg_t *seg                    = memh;
     uct_posix_packed_rkey_t *packed_rkey = rkey_buffer;
 
     packed_rkey->seg_id  = seg->seg_id;
@@ -624,9 +639,10 @@ static void uct_posix_mem_detach(uct_mm_md_t *md, const uct_mm_remote_seg_t *rse
     uct_posix_mem_detach_common(rseg);
 }
 
-static ucs_status_t
-uct_posix_rkey_unpack(uct_component_t *component, const void *rkey_buffer,
-                      uct_rkey_t *rkey_p, void **handle_p)
+UCS_PROFILE_FUNC(ucs_status_t, uct_posix_rkey_unpack,
+                 (component, rkey_buffer, rkey_p, handle_p),
+                 uct_component_t *component, const void *rkey_buffer,
+                 uct_rkey_t *rkey_p, void **handle_p)
 {
     const uct_posix_packed_rkey_t *packed_rkey = rkey_buffer;
     uct_mm_remote_seg_t *rseg;
@@ -651,8 +667,8 @@ uct_posix_rkey_unpack(uct_component_t *component, const void *rkey_buffer,
     return UCS_OK;
 }
 
-static ucs_status_t
-uct_posix_rkey_release(uct_component_t *component, uct_rkey_t rkey, void *handle)
+UCS_PROFILE_FUNC(ucs_status_t, uct_posix_rkey_release,(component, rkey, handle),
+                 uct_component_t *component, uct_rkey_t rkey, void *handle)
 {
     uct_mm_remote_seg_t *rseg = handle;
     ucs_status_t status;
@@ -688,4 +704,8 @@ static uct_mm_md_mapper_ops_t uct_posix_md_ops = {
 };
 
 UCT_MM_TL_DEFINE(posix, &uct_posix_md_ops, uct_posix_rkey_unpack,
-                 uct_posix_rkey_release, "POSIX_", uct_posix_iface_config_table)
+                 uct_posix_rkey_release, "POSIX_",
+                 uct_posix_iface_config_table);
+
+UCT_SINGLE_TL_INIT(&uct_posix_component.super, posix,,,)
+

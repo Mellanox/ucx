@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2020-2021.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020-2021. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -34,32 +34,37 @@ ucp_proto_am_bcopy_single_send(ucp_request_t *req, ucp_am_id_t am_id,
         ucs_assertv((packed_size >= 0) && (packed_size <= max_packed_size),
                     "packed_size=%zd max_packed_size=%zu", packed_size,
                     max_packed_size);
-        return uct_ep_am_short(ep->uct_eps[lane], am_id, buffer[0],
+        return uct_ep_am_short(ucp_ep_get_lane(ep, lane), am_id, buffer[0],
                                &buffer[1], packed_size - sizeof(buffer[0]));
     } else {
         /* Send as bcopy */
-        packed_size = uct_ep_am_bcopy(ep->uct_eps[lane], am_id, pack_func,
+        packed_size = uct_ep_am_bcopy(ucp_ep_get_lane(ep, lane), am_id, pack_func,
                                       pack_arg, 0);
         return ucs_likely(packed_size >= 0) ? UCS_OK : packed_size;
     }
 }
 
-static UCS_F_ALWAYS_INLINE ucs_status_t
-ucp_proto_single_status_handle(ucp_request_t *req,
-                               ucp_proto_complete_cb_t complete_func,
-                               ucp_lane_index_t lane, ucs_status_t status)
+static UCS_F_ALWAYS_INLINE ucs_status_t ucp_proto_single_status_handle(
+        ucp_request_t *req, int is_zcopy, ucp_proto_complete_cb_t complete_func,
+        ucp_lane_index_t lane, ucs_status_t status)
 {
     if (ucs_likely(status == UCS_OK)) {
-        if (complete_func != NULL) {
-            complete_func(req);
-        }
+        /* fast path is OK */
+    } else if (is_zcopy && (status == UCS_INPROGRESS)) {
+        ++req->send.state.uct_comp.count;
     } else if (status == UCS_ERR_NO_RESOURCE) {
         /* keep on pending queue */
         req->send.lane = lane;
         return UCS_ERR_NO_RESOURCE;
-    } else if (status != UCS_INPROGRESS) {
+    } else {
         ucp_proto_request_abort(req, status);
+        return UCS_OK;
     }
+
+    if (complete_func != NULL) {
+        return complete_func(req);
+    }
+
     return UCS_OK;
 }
 
@@ -74,27 +79,29 @@ ucp_proto_am_bcopy_single_progress(ucp_request_t *req, ucp_am_id_t am_id,
 
     status = ucp_proto_am_bcopy_single_send(req, am_id, lane, pack_func,
                                             pack_arg, max_packed_size);
-    return ucp_proto_single_status_handle(req, complete_func, lane, status);
+    return ucp_proto_single_status_handle(req, 0, complete_func, lane, status);
 }
 
 static UCS_F_ALWAYS_INLINE ucs_status_t
 ucp_proto_zcopy_single_progress(ucp_request_t *req, unsigned uct_mem_flags,
                                 ucp_proto_send_single_cb_t send_func,
-                                const char *name)
+                                ucp_proto_complete_cb_t complete_func,
+                                uct_completion_callback_t uct_comp_cb,
+                                ucp_proto_request_zcopy_init_cb_t zcopy_init)
 {
     const ucp_proto_single_priv_t *spriv = req->send.proto_config->priv;
     ucp_datatype_iter_t next_iter;
     ucs_status_t status;
     ucp_md_map_t md_map;
-    uct_iov_t iov;
+    /* The second iov of the array is reserved for the message footer. */
+    uct_iov_t iov[2];
 
     ucs_assert(req->send.state.dt_iter.offset == 0);
 
     if (!(req->flags & UCP_REQUEST_FLAG_PROTO_INITIALIZED)) {
         md_map = (spriv->reg_md == UCP_NULL_RESOURCE) ? 0 : UCS_BIT(spriv->reg_md);
-        status = ucp_proto_request_zcopy_init(req, md_map,
-                                              ucp_proto_request_zcopy_completion,
-                                              uct_mem_flags);
+        status = zcopy_init(req, md_map, uct_comp_cb, uct_mem_flags,
+                            UCS_BIT(UCP_DATATYPE_CONTIG));
         if (status != UCS_OK) {
             ucp_proto_request_abort(req, status);
             return UCS_OK; /* remove from pending after request is completed */
@@ -103,14 +110,14 @@ ucp_proto_zcopy_single_progress(ucp_request_t *req, unsigned uct_mem_flags,
         req->flags |= UCP_REQUEST_FLAG_PROTO_INITIALIZED;
     }
 
-    ucp_datatype_iter_next_iov(&req->send.state.dt_iter, spriv->super.memh_index,
-                               SIZE_MAX, &next_iter, &iov);
-    status = send_func(req, spriv, &iov);
-    UCS_PROFILE_REQUEST_EVENT_CHECK_STATUS(req, name, iov.length, status);
+    ucp_datatype_iter_next_iov(&req->send.state.dt_iter, SIZE_MAX,
+                               spriv->super.md_index,
+                               UCS_BIT(UCP_DATATYPE_CONTIG), &next_iter, iov,
+                               1);
 
-    return ucp_proto_single_status_handle(
-            req, ucp_proto_request_zcopy_complete_success, spriv->super.lane,
-            status);
+    status = send_func(req, spriv, iov);
+    return ucp_proto_single_status_handle(req, 1, complete_func,
+                                          spriv->super.lane, status);
 }
 
 #endif

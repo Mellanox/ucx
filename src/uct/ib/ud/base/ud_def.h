@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -47,20 +47,18 @@ typedef struct uct_ud_iface_peer uct_ud_iface_peer_t;
 enum {
     UCT_UD_PACKET_ACK_REQ_SHIFT   = 25,
     UCT_UD_PACKET_AM_ID_SHIFT     = 27,
-    UCT_UD_PACKET_DEST_ID_SHIFT   = 24,
-    UCT_UD_PACKET_PUT_SHIFT       = 28,
+    UCT_UD_PACKET_DEST_ID_SHIFT   = 24
 };
 
 enum {
     UCT_UD_PACKET_FLAG_AM      = UCS_BIT(24),
     UCT_UD_PACKET_FLAG_ACK_REQ = UCS_BIT(25),
     UCT_UD_PACKET_FLAG_ECN     = UCS_BIT(26),
-    UCT_UD_PACKET_FLAG_NAK     = UCS_BIT(27),
+    UCT_UD_PACKET_FLAG_NACK    = UCS_BIT(27),
     UCT_UD_PACKET_FLAG_PUT     = UCS_BIT(28),
     UCT_UD_PACKET_FLAG_CTL     = UCS_BIT(29),
 
-    UCT_UD_PACKET_AM_ID_MASK     = UCS_MASK(UCT_UD_PACKET_AM_ID_SHIFT),
-    UCT_UD_PACKET_DEST_ID_MASK   = UCS_MASK(UCT_UD_PACKET_DEST_ID_SHIFT),
+    UCT_UD_PACKET_DEST_ID_MASK = UCS_MASK(UCT_UD_PACKET_DEST_ID_SHIFT)
 };
 
 enum {
@@ -73,7 +71,7 @@ network header layout
 
 A - ack request
 E - explicit congestion notification (ecn)
-N - negative acknoledgement
+N - negative acknowledgement
 P - put emulation (will be disabled in the future)
 C - control packet extended header
 
@@ -104,7 +102,7 @@ Control packet header
         struct { // am false
             uint8_t ack_req:1;
             uint8_t ecn:1;
-            uint8_t nak:1;
+            uint8_t nack:1;
             uint8_t put:1;
             uint8_t ctl:1;
             uint8_t reserved:2;
@@ -122,6 +120,9 @@ typedef struct uct_ud_neth {
     uct_ud_psn_t        psn;
     uct_ud_psn_t        ack_psn;
 } UCS_S_PACKED uct_ud_neth_t;
+
+
+#define UCT_UD_RX_HDR_LEN (UCT_IB_GRH_LEN + sizeof(uct_ud_neth_t))
 
 
 enum {

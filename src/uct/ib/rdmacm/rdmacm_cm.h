@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2019-2021.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019-2021. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -10,8 +10,11 @@
 #include <uct/base/uct_cm.h>
 #include <ucs/datastruct/khash.h>
 #include <ucs/sys/string.h>
+#include <ucs/type/spinlock.h>
 #include <ucs/datastruct/bitmap.h>
+#if HAVE_MLX5_DV
 #include <uct/ib/mlx5/ib_mlx5.h>
+#endif
 
 #include <rdma/rdma_cma.h>
 
@@ -61,16 +64,20 @@ typedef struct uct_rdmacm_cm_reserved_qpn_blk {
     uint32_t               next_avail_qpn_offset; /** Offset of next available qpn */
     uint32_t               refcount;              /** The counter of qpns which were created and hasn't been destroyed */
     ucs_list_link_t        entry;                 /** List link of blocks */
+#if HAVE_DECL_MLX5DV_IS_SUPPORTED
     struct mlx5dv_devx_obj *obj;                  /** The devx obj used to create the block */
+#endif
 } uct_rdmacm_cm_reserved_qpn_blk_t;
 
 
 typedef struct uct_rdmacm_cm_device_context {
     int             use_reserved_qpn;
-    ucs_spinlock_t  lock;                         /** Avoid competed condition on the qpn resource for multi-threads */ 
+    ucs_spinlock_t  lock;                         /** Avoid competed condition on the qpn resource for multi-threads */
     ucs_list_link_t blk_list;
     uint32_t        log_reserved_qpn_granularity;
+    uint32_t        num_dummy_qps;
     struct ibv_cq   *cq;
+    uint8_t         eth_ports;
 } uct_rdmacm_cm_device_context_t;
 
 
@@ -108,10 +115,12 @@ ucs_status_t uct_rdmacm_cm_get_device_context(uct_rdmacm_cm_t *cm,
                                               uct_rdmacm_cm_device_context_t **ctx_p);
 
 ucs_status_t
-uct_rdmacm_cm_reserved_qpn_blk_add(uct_rdmacm_cm_device_context_t *ctx,
-                                   struct ibv_context *verbs,
-                                   uct_rdmacm_cm_reserved_qpn_blk_t **blk_p);
+uct_rdmacm_cm_reserved_qpn_blk_alloc(uct_rdmacm_cm_device_context_t *ctx,
+                                     struct ibv_context *verbs,
+                                     ucs_log_level_t err_level,
+                                     uct_rdmacm_cm_reserved_qpn_blk_t **blk_p);
 
-void uct_rdmacm_cm_reserved_qpn_blk_destroy(uct_rdmacm_cm_reserved_qpn_blk_t *blk);
+void uct_rdmacm_cm_reserved_qpn_blk_release(
+        uct_rdmacm_cm_reserved_qpn_blk_t *blk);
 
 #endif

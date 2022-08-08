@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2020.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -38,8 +38,11 @@ const ucp_lane_type_info_t ucp_lane_type_info[] = {
     [UCP_LANE_TYPE_CM] = {
         .short_name = "cm"
     },
+    [UCP_LANE_TYPE_KEEPALIVE] = {
+        .short_name = "keepalive"
+    },
     [UCP_LANE_TYPE_LAST] = {
         .short_name = NULL
-    },
+    }
 };
 

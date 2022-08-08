@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2012.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2012. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -9,6 +9,9 @@
 
 /* Convert token to string */
 #define UCS_PP_QUOTE(x)                   # x
+
+/* Expand macro token to the macro value */
+#define UCS_PP_EXPAND(x)                  x
 
 /* Paste two expanded tokens */
 #define __UCS_TOKENPASTE_HELPER(x, y)     x ## y

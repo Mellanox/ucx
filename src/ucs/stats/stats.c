@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2013.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2013. ALL RIGHTS RESERVED.
 * Copyright (C) The University of Tennessee and The University
 *               of Tennessee Research Foundation. 2020. ALL RIGHTS RESERVED.
 * Copyright (C) Huawei Technologies Co., Ltd. 2021.  ALL RIGHTS RESERVED.
@@ -235,7 +235,7 @@ static void ucs_stats_node_remove(ucs_stats_node_t *node, int make_inactive)
             make_inactive = 0;
         }
     } else {
-        ucs_stats_clean_node(node); 
+        ucs_stats_clean_node(node);
     }
 
     pthread_mutex_unlock(&ucs_stats_context.lock);
@@ -246,7 +246,7 @@ static void ucs_stats_node_remove(ucs_stats_node_t *node, int make_inactive)
         }
         ucs_free(node);
     }
-}   
+}
 
 static void ucs_stats_filter_node_init_root() {
     ucs_list_head_init(&ucs_stats_context.root_filter_node.list);
@@ -367,14 +367,14 @@ static void ucs_stats_add_to_filter(ucs_stats_node_t *node,
 
     filter_node->type_list_len++;
     ucs_list_add_tail(&filter_node->type_list_head, &node->type_list);
-    node->filter_node = filter_node;   
+    node->filter_node = filter_node;
 
     for (i = 0; (i < node->cls->num_counters) && (i < 64); ++i) {
-        filter_index = ucs_config_names_search(ucs_global_opts.stats_filter,
+        filter_index = ucs_config_names_search(&ucs_global_opts.stats_filter,
                                                node->cls->counter_names[i]);
         if (filter_index >= 0) {
             filter_node->counters_bitmask |= UCS_BIT(i);
-            found = 1; 
+            found = 1;
         }
     }
 
@@ -480,17 +480,13 @@ static size_t ucs_stats_agrgt_sum_clsid_alloc(ucs_stats_node_t *node)
     uint32_t counter_index;
     size_t *offset;
     ucs_stats_aggrgt_counter_name_t *counter_name;
-    ucs_status_t status;
 
     /* Get current array length and update it in the node structure */
     node->cls->class_id = ucs_array_length(&ucs_stats_context.aggrt_class_offsets);
 
-    status = ucs_array_append(aggrt_class_offsets, &ucs_stats_context.aggrt_class_offsets);
-    if (status != UCS_OK) {
-        return status;
-    }
-
-    offset = ucs_array_last(&ucs_stats_context.aggrt_class_offsets);
+    offset = ucs_array_append(aggrt_class_offsets,
+                              &ucs_stats_context.aggrt_class_offsets,
+                              return UCS_ERR_NO_MEMORY);
 
     /* Initialize entry */
     *offset = ucs_array_length(&ucs_stats_context.aggrgt_counter_names);
@@ -498,14 +494,10 @@ static size_t ucs_stats_agrgt_sum_clsid_alloc(ucs_stats_node_t *node)
     ucs_for_each_bit(counter_index, filter_node->counters_bitmask) {
         ucs_list_for_each(temp_node, &filter_node->type_list_head,
                           type_list) {
-            status = ucs_array_append(aggrgt_counter_names,
-                                      &ucs_stats_context.aggrgt_counter_names);
-            if (status != UCS_OK) {
-                return status;
-            }
-
-            counter_name = ucs_array_last(&ucs_stats_context.aggrgt_counter_names);
-
+            counter_name =
+                    ucs_array_append(aggrgt_counter_names,
+                                     &ucs_stats_context.aggrgt_counter_names,
+                                     return UCS_ERR_NO_MEMORY);
             counter_name->counter_name = node->cls->counter_names[counter_index];
             counter_name->class_name   = node->cls->name;
         }

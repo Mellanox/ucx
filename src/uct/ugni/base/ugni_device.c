@@ -1,7 +1,7 @@
 /* -*- Mode: C; c-basic-offset:4 ; indent-tabs-mode:nil -*- */
 /**
  * Copyright (c) UT-Battelle, LLC. 2014-2017. ALL RIGHTS RESERVED.
- * Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
  * Copyright (c) Los Alamos National Security, LLC. 2018. ALL RIGHTS RESERVED.
  * Copyright (c) Triad National Security, LLC. 2018. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
@@ -20,7 +20,7 @@
 #include <pmi.h>
 
 /**
- * @breif Static information about UGNI job
+ * @brief Static information about UGNI job
  *
  * This is static information about Cray's job.
  * The information is static and does not change since job launch.
@@ -180,7 +180,7 @@ ucs_status_t init_device_list()
     gni_return_t ugni_rc = GNI_RC_SUCCESS;
     uct_ugni_job_info_t *inf = NULL;
 
-    /* check if devices were already initilized */
+    /* check if devices were already initialized */
 
     inf = uct_ugni_get_job_info();
     if (NULL == inf) {

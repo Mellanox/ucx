@@ -1,9 +1,10 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 # Copyright (C) UT-Battelle, LLC. 2015-2017. ALL RIGHTS RESERVED.
 # Copyright (C) The University of Tennessee and The University
 #               of Tennessee Research Foundation. 2016. ALL RIGHTS RESERVED.
 # Copyright (C) ARM Ltd. 2016.  ALL RIGHTS RESERVED.
+# Copyright (C) NextSilicon Ltd. 2021.  ALL RIGHTS RESERVED.
 #
 # See file LICENSE for terms.
 #
@@ -11,12 +12,20 @@
 SUBDIRS = cuda rocm lib
 CC      = $(UCX_PERFTEST_CC)
 
-noinst_HEADERS        = api/libperf.h
-bin_PROGRAMS          = ucx_perftest
-ucx_perftest_SOURCES  = perftest.c
+noinst_HEADERS = \
+	perftest.h \
+	api/libperf.h
+
+bin_PROGRAMS = ucx_perftest
+
+ucx_perftest_SOURCES = \
+	perftest.c \
+	perftest_run.c \
+	perftest_params.c
+
 ucx_perftest_CPPFLAGS = $(BASE_CPPFLAGS) $(RTE_CPPFLAGS)
 ucx_perftest_CFLAGS   = $(BASE_CFLAGS) $(OPENMP_CFLAGS)
-ucx_perftest_LDFLAGS  = $(RTE_LDFLAGS) -Wl,-dynamic-list-data
+ucx_perftest_LDFLAGS  = $(RTE_LDFLAGS) $(LDFLAGS_DYNAMIC_LIST_DATA)
 ucx_perftest_LDADD    = \
 	$(abs_top_builddir)/src/uct/libuct.la \
 	$(abs_top_builddir)/src/ucp/libucp.la \

@@ -1,5 +1,5 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 # Copyright (C) UT-Battelle, LLC. 2015-2017. ALL RIGHTS RESERVED.
 # Copyright (C) The University of Tennessee and The University
 #               of Tennessee Research Foundation. 2016. ALL RIGHTS RESERVED.
@@ -19,12 +19,14 @@ libucxperf_la_LIBADD   = \
 	$(abs_top_builddir)/src/ucs/libucs.la
 
 # C-linkable C++ code - must override any inherited CXXFLAGS
-CXXFLAGS              += -nostdlib $(PERF_LIB_CXXFLAGS) 
+CXXFLAGS              += -nostdlib $(PERF_LIB_CXXFLAGS) -std=c++11
 
 noinst_HEADERS = \
 	libperf_int.h
 
 libucxperf_la_SOURCES = \
 	libperf.c \
+	libperf_memory.c \
+	libperf_thread.c \
 	uct_tests.cc \
 	ucp_tests.cc

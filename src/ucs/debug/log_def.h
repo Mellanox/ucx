@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2020. ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -8,7 +8,7 @@
 #define UCS_LOG_DEF_H_
 
 #ifndef UCS_MAX_LOG_LEVEL
-#  define UCS_MAX_LOG_LEVEL  UCS_LOG_LEVEL_TRACE_LAST
+#  define UCS_MAX_LOG_LEVEL  UCS_LOG_LEVEL_LAST
 #endif
 
 #include <ucs/sys/compiler_def.h>
@@ -131,6 +131,14 @@ void ucs_log_flush();
  * @return Configured log buffer size
  */
 size_t ucs_log_get_buffer_size();
+
+
+/**
+ * Print a compact log line (without file/line prefixes) to the log stream.
+ *
+ * @param [in] str   Log line to print.
+ */
+void ucs_log_print_compact(const char *str);
 
 
 /**

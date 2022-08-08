@@ -1,10 +1,10 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
-* Copyright (c) UT-Battelle, LLC. 2014-2019. ALL RIGHTS RESERVED.
-* Copyright (C) ARM Ltd. 2016.  ALL RIGHTS RESERVED.
-*
-* See file LICENSE for terms.
-*/
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
+ * Copyright (c) UT-Battelle, LLC. 2014-2019. ALL RIGHTS RESERVED.
+ * Copyright (C) ARM Ltd. 2016.  ALL RIGHTS RESERVED.
+ *
+ * See file LICENSE for terms.
+ */
 
 #ifndef UCS_SYS_H
 #define UCS_SYS_H
@@ -39,7 +39,6 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
-#include <signal.h>
 #include <unistd.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -89,14 +88,6 @@ typedef enum {
 typedef enum {
     UCS_SYS_VMA_FLAG_DONTCOPY = UCS_BIT(0),
 } ucs_sys_vma_info_flags_t;
-
-
-/* file time information */
-typedef enum {
-    UCS_SYS_FILE_TIME_CTIME, /**< create time */
-    UCS_SYS_FILE_TIME_ATIME, /**< access time */
-    UCS_SYS_FILE_TIME_MTIME  /**< modification time */
-} ucs_sys_file_time_t;
 
 
 /* information about virtual memory area */
@@ -230,6 +221,20 @@ ucs_status_t
 ucs_open_output_stream(const char *config_str, ucs_log_level_t err_log_level,
                        FILE **p_fstream, int *p_need_close,
                        const char **p_next_token, char **p_filename);
+
+
+/**
+ * Read file contents into a string. If the size of the data is smaller than the
+ * supplied upper limit (max), a null terminator is appended to the data.
+ *
+ * @param mode            File open mode (same as for fopen (3)).
+ * @param err_log_level   Logging level that should be used for printing errors.
+ * @param filename_fmt    File name printf-like format string.
+ *
+ * @return Handle to the open file, or NULL if failed.
+ */
+FILE *ucs_open_file(const char *mode, ucs_log_level_t err_log_level,
+                    const char *filename_fmt, ...) UCS_F_PRINTF(3, 4);
 
 
 /**
@@ -561,15 +566,6 @@ int ucs_sys_ns_is_default(ucs_sys_namespace_type_t name);
  */
 ucs_status_t ucs_sys_get_boot_id(uint64_t *high, uint64_t *low);
 
-
-/**
- * Read boot ID value or use machine_guid.
- *
- * @return 64-bit value representing system ID.
- */
-uint64_t ucs_iface_get_system_id();
-
-
 /**
  * Read directory
  *
@@ -606,19 +602,6 @@ ucs_status_t ucs_sys_enum_threads(ucs_sys_enum_threads_cb_t cb, void *ctx);
 
 
 /**
- * Get file time
- *
- * @param [in]  name       File name
- * @param [in]  type       Type of file time information
- * @param [out] ctime      File creation time
- *
- * @return UCS_OK if file is found and got information.
- */
-ucs_status_t ucs_sys_get_file_time(const char *name, ucs_sys_file_time_t type,
-                                   ucs_time_t *time);
-
-
-/**
  * Check the per-process limit on the number of open file descriptors.
  *
  * @return UCS_OK if the limit has not been reached. UCS_ERR_EXCEEDS_LIMIT,
@@ -640,6 +623,43 @@ ucs_status_t ucs_sys_check_fd_limit_per_process();
 ucs_status_t ucs_pthread_create(pthread_t *thread_id_p,
                                 void *(*start_routine)(void*), void *arg,
                                 const char *fmt, ...) UCS_F_PRINTF(4, 5);
+
+/*
+ * Get number of CPUs.
+ *
+ * @return number of CPUs, or -1 in case of error.
+ */
+long ucs_sys_get_num_cpus();
+
+
+/*
+ * Get process creation time.
+ *
+ * @param [in] pid             Process id to get start time.
+ *
+ * @return The time the process started after system boot or 0 in case of error.
+ */
+unsigned long ucs_sys_get_proc_create_time(pid_t pid);
+
+
+/*
+ * Get effective max locked memory limit (unlimited for privileged user).
+ * In case we can't query the system for capabilities, we fallback to
+ * @ref ucs_sys_get_memlock_rlimit
+ *
+ * @param [out] rlimit_value If successful, set to the current limit value.
+ *
+ * @return UCS_OK if successful, or error status if failed.
+ */
+ucs_status_t ucs_sys_get_effective_memlock_rlimit(size_t *rlimit_value);
+
+
+/*
+ * Check if library is built dynamically (.so module)
+ *
+ * @return 1 if built dynamically, 0 if statically.
+ */
+int ucs_sys_is_dynamic_lib(void);
 
 END_C_DECLS
 

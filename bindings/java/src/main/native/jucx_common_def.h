@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Mellanox Technologies Ltd. 2019. ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 #ifndef HELPER_H_
@@ -58,6 +58,11 @@ typedef uintptr_t native_ptr;
 bool j2cInetSockAddr(JNIEnv *env, jobject sock_addr, sockaddr_storage& ss, socklen_t& sa_len);
 
 /**
+ * @brief Utility to convert c sockaddr to java InetSocketAddress
+ */
+jobject c2jInetSockAddr(JNIEnv *env, const sockaddr_storage* ss);
+
+/**
  * @brief Get the jni env object. To be able to call java methods from ucx async callbacks.
  */
 JNIEnv* get_jni_env();
@@ -89,7 +94,7 @@ ucs_status_t am_recv_callback(void *arg, const void *header, size_t header_lengt
  * @brief Utility to allocate jucx request and set appropriate java callback in it.
  */
 jobject jucx_request_allocate(JNIEnv *env, jobject callback, ucp_request_param_t *param,
-                              jint memory_type);
+                              jobject request_params);
 
 /**
  * @ingroup JUCX_REQ

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2018.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2018. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -12,6 +12,9 @@
 #include <ucp/proto/proto_am.h>
 #include <uct/api/uct.h>
 #include <ucs/datastruct/ptr_map.h>
+
+
+#define UCP_PROTO_RMA_EMULATION_DESC "software emulation"
 
 
 /**
@@ -82,6 +85,10 @@ extern ucp_amo_proto_t ucp_amo_basic_proto;
 extern ucp_amo_proto_t ucp_amo_sw_proto;
 
 
+extern const ucp_rma_proto_t *ucp_rma_proto_list[];
+extern const ucp_amo_proto_t *ucp_amo_proto_list[];
+
+
 ucs_status_t ucp_rma_request_advance(ucp_request_t *req, ssize_t frag_length,
                                      ucs_status_t status,
                                      ucs_ptr_map_key_t req_id);
@@ -94,10 +101,8 @@ void ucp_rma_sw_send_cmpl(ucp_ep_h ep);
  * Check RMA protocol requirements
  */
 #define UCP_RMA_PROTO_INIT_CHECK(_init_params, _op_id) \
-    if (((_init_params)->select_param->op_id    != (_op_id)) || \
-        ((_init_params)->select_param->dt_class != UCP_DATATYPE_CONTIG)) { \
+    if ((_init_params)->select_param->op_id != (_op_id)) { \
         return UCS_ERR_UNSUPPORTED; \
     }
-
 
 #endif

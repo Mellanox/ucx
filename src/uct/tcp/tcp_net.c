@@ -1,15 +1,15 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2016.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2016. ALL RIGHTS RESERVED.
  * Copyright (C) Huawei Technologies Co., Ltd. 2020.  ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
 
-#include "tcp.h"
-
 #ifdef HAVE_CONFIG_H
 #  include "config.h"
 #endif
+
+#include "tcp.h"
 
 #include <ucs/sys/string.h>
 #include <linux/sockios.h>

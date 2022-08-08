@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2020.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -80,11 +80,17 @@ ucp_proto_get_am_bcopy_init(const ucp_proto_init_params_t *init_params)
         .super.overhead      = 40e-9,
         .super.cfg_thresh    = context->config.ext.bcopy_thresh,
         .super.cfg_priority  = 20,
+        .super.min_length    = 0,
+        .super.max_length    = SIZE_MAX,
+        .super.min_iov       = 0,
         .super.min_frag_offs = UCP_PROTO_COMMON_OFFSET_INVALID,
         .super.max_frag_offs = ucs_offsetof(uct_iface_attr_t, cap.am.max_bcopy),
+        .super.max_iov_offs  = UCP_PROTO_COMMON_OFFSET_INVALID,
         .super.hdr_size      = sizeof(ucp_get_req_hdr_t),
+        .super.send_op       = UCT_EP_OP_AM_BCOPY,
+        .super.memtype_op    = UCT_EP_OP_PUT_SHORT,
         .super.flags         = UCP_PROTO_COMMON_INIT_FLAG_RESPONSE |
-                               UCP_PROTO_COMMON_INIT_FLAG_MEM_TYPE,
+                               UCP_PROTO_COMMON_INIT_FLAG_CAP_SEG_SIZE,
         .lane_type           = UCP_LANE_TYPE_AM,
         .tl_cap_flags        = UCT_IFACE_FLAG_AM_BCOPY
     };
@@ -94,11 +100,12 @@ ucp_proto_get_am_bcopy_init(const ucp_proto_init_params_t *init_params)
     return ucp_proto_single_init(&params);
 }
 
-static ucp_proto_t ucp_get_am_bcopy_proto = {
-    .name       = "get/am/bcopy",
-    .flags      = 0,
-    .init       = ucp_proto_get_am_bcopy_init,
-    .config_str = ucp_proto_single_config_str,
-    .progress   = {ucp_proto_get_am_bcopy_progress}
+ucp_proto_t ucp_get_am_bcopy_proto = {
+    .name     = "get/am/bcopy",
+    .desc     = UCP_PROTO_RMA_EMULATION_DESC,
+    .flags    = 0,
+    .init     = ucp_proto_get_am_bcopy_init,
+    .query    = ucp_proto_single_query,
+    .progress = {ucp_proto_get_am_bcopy_progress},
+    .abort    = (ucp_request_abort_func_t)ucs_empty_function_do_assert_void
 };
-UCP_PROTO_REGISTER(&ucp_get_am_bcopy_proto);

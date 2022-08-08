@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2013.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2013. ALL RIGHTS RESERVED.
 * Copyright (C) UT-Battelle, LLC. 2014. ALL RIGHTS RESERVED.
 * Copyright (C) Huawei Technologies Co., Ltd. 2021.  ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
@@ -67,12 +67,14 @@ public:
             "category", 0
         };
 
-        ucs_status_t status = UCS_STATS_NODE_ALLOC(&cat_node, &category_stats_class,
-                                                   ucs_stats_get_root());
+        ucs_status_t status = UCS_STATS_NODE_ALLOC(&cat_node,
+                                                   &category_stats_class,
+                                                   ucs_stats_get_root(), "");
         ASSERT_UCS_OK(status);
         for (unsigned i = 0; i < NUM_DATA_NODES; ++i) {
-            status = UCS_STATS_NODE_ALLOC(&data_nodes[i], m_data_stats_class,
-                                         cat_node, "-%d", i);
+            status = UCS_STATS_NODE_ALLOC(&data_nodes[i],
+                                          m_data_stats_class, cat_node,
+                                          "-%d", i);
             ASSERT_UCS_OK(status);
 
             UCS_STATS_UPDATE_COUNTER(data_nodes[i], 0, 10);
@@ -89,7 +91,7 @@ public:
         UCS_STATS_NODE_FREE(cat_node);
     }
 
-protected:    
+protected:
     static const unsigned NUM_DATA_NODES = 3;
     static const unsigned NUM_COUNTERS   = 4;
 

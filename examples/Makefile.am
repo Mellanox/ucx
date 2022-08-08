@@ -1,5 +1,5 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2001-2018.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2018. ALL RIGHTS RESERVED.
 #
 # Copyright (C) UT-Battelle, LLC. 2015. ALL RIGHTS RESERVED.
 # See file LICENSE for terms.
@@ -10,7 +10,8 @@ dist_examples_DATA =   \
 	hello_world_util.h \
 	ucp_hello_world.c  \
 	uct_hello_world.c  \
-	ucp_client_server.c
+	ucp_client_server.c \
+	ucp_util.h
 
 if HAVE_CUDA
 EXAMPLE_CUDA_LD_FLAGS = $(CUDA_LDFLAGS)

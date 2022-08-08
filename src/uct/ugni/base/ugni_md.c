@@ -1,6 +1,6 @@
 /**
  * Copyright (c) UT-Battelle, LLC. 2014-2017. ALL RIGHTS RESERVED.
- * Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -51,17 +51,13 @@ static ucs_status_t uct_ugni_md_query(uct_md_h md, uct_md_attr_t *md_attr)
 }
 
 static ucs_status_t uct_ugni_mem_reg(uct_md_h md, void *address, size_t length,
-                                     unsigned flags, uct_mem_h *memh_p)
+                                     const uct_md_mem_reg_params_t *params,
+                                     uct_mem_h *memh_p)
 {
     ucs_status_t status;
     gni_return_t ugni_rc;
     uct_ugni_md_t *ugni_md = ucs_derived_of(md, uct_ugni_md_t);
     gni_mem_handle_t * mem_hndl = NULL;
-
-    if (0 == length) {
-        ucs_error("Unexpected length %zu", length);
-        return UCS_ERR_INVALID_PARAM;
-    }
 
     mem_hndl = ucs_malloc(sizeof(gni_mem_handle_t), "gni_mem_handle_t");
     if (NULL == mem_hndl) {
@@ -89,7 +85,7 @@ static ucs_status_t uct_ugni_mem_reg(uct_md_h md, void *address, size_t length,
     return UCS_OK;
 
 mem_err:
-    free(mem_hndl);
+    ucs_free(mem_hndl);
     return status;
 }
 
@@ -117,11 +113,13 @@ static ucs_status_t uct_ugni_mem_dereg(uct_md_h md,
     return status;
 }
 
-static ucs_status_t uct_ugni_rkey_pack(uct_md_h md, uct_mem_h memh,
-                                       void *rkey_buffer)
+static ucs_status_t
+uct_ugni_rkey_pack(uct_md_h md, uct_mem_h memh,
+                   const uct_md_mkey_pack_params_t *params,
+                   void *rkey_buffer)
 {
-    gni_mem_handle_t *mem_hndl = (gni_mem_handle_t *) memh;
-    uint64_t *ptr = rkey_buffer;
+    gni_mem_handle_t *mem_hndl = memh;
+    uint64_t *ptr              = rkey_buffer;
 
     ptr[0] = UCT_UGNI_RKEY_MAGIC;
     ptr[1] = mem_hndl->qword1;
@@ -240,6 +238,7 @@ uct_component_t uct_ugni_component = {
     },
     .cm_config          = UCS_CONFIG_EMPTY_GLOBAL_LIST_ENTRY,
     .tl_list            = UCT_COMPONENT_TL_LIST_INITIALIZER(&uct_ugni_component),
-    .flags              = 0
+    .flags              = 0,
+    .md_vfs_init        = (uct_component_md_vfs_init_func_t)ucs_empty_function
 };
 UCT_COMPONENT_REGISTER(&uct_ugni_component);

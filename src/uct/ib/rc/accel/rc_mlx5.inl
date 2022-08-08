@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -70,8 +70,7 @@ static UCS_F_NOINLINE void
 uct_rc_mlx5_iface_hold_srq_desc(uct_rc_mlx5_iface_common_t *iface,
                                 uct_ib_mlx5_srq_seg_t *seg,
                                 struct mlx5_cqe64 *cqe, uint16_t wqe_ctr,
-                                ucs_status_t status, unsigned offset,
-                                uct_recv_desc_t *release_desc)
+                                unsigned offset, uct_recv_desc_t *release_desc)
 {
     void *udesc;
     int stride_idx;
@@ -116,9 +115,9 @@ uct_rc_mlx5_iface_release_srq_seg(uct_rc_mlx5_iface_common_t *iface,
      * But it respects srq size when srq topology is a linked-list. */
     wqe_index = wqe_ctr & srq->mask;
 
-    if (ucs_unlikely(status != UCS_OK)) {
-        uct_rc_mlx5_iface_hold_srq_desc(iface, seg, cqe, wqe_ctr, status,
-                                        offset, release_desc);
+    if (ucs_unlikely(status == UCS_INPROGRESS)) {
+        uct_rc_mlx5_iface_hold_srq_desc(iface, seg, cqe, wqe_ctr, offset,
+                                        release_desc);
     }
 
     if (UCT_RC_MLX5_MP_ENABLED(iface)) {
@@ -279,9 +278,8 @@ uct_rc_mlx5_iface_poll_rx_cq(uct_rc_mlx5_iface_common_t *iface, int poll_flags)
 
     if (ucs_unlikely(uct_ib_mlx5_cqe_is_hw_owned(op_own, idx, cq->cq_length))) {
         return NULL;
-    } else if (ucs_unlikely(op_own & UCT_IB_MLX5_CQE_OP_OWN_ERR_MASK)) {
-        uct_rc_mlx5_iface_check_rx_completion(iface, cqe, poll_flags);
-        return NULL;
+    } else if (ucs_unlikely(uct_ib_mlx5_cqe_is_error_or_zipped(op_own))) {
+        return uct_rc_mlx5_iface_check_rx_completion(iface, cqe, poll_flags);
     }
 
     cq->cq_ci = idx + 1;
@@ -480,7 +478,7 @@ uct_rc_mlx5_common_post_send(uct_rc_mlx5_iface_common_t *iface, int qp_type,
                        ((opcode == MLX5_OPCODE_SEND) || (opcode == MLX5_OPCODE_SEND_IMM)) ?
                        uct_rc_mlx5_common_packet_dump : NULL);
 
-    res_count = uct_ib_mlx5_post_send(txwq, ctrl, wqe_size);
+    res_count = uct_ib_mlx5_post_send(txwq, ctrl, wqe_size, 1);
     if (fm_ce_se & MLX5_WQE_CTRL_CQ_UPDATE) {
         txwq->sig_pi = txwq->prev_sw_pi;
     }
@@ -1070,7 +1068,7 @@ uct_rc_mlx5_iface_common_post_srq_op(uct_rc_mlx5_cmd_wq_t *cmd_wq,
     uct_rc_mlx5_set_tm_seg(txwq, tm, op_code, next_idx, unexp_cnt,
                            tag, tag_mask, tm_flags);
 
-    uct_ib_mlx5_post_send(txwq, ctrl, wqe_size);
+    uct_ib_mlx5_post_send(txwq, ctrl, wqe_size, 0);
 }
 
 
@@ -1266,6 +1264,10 @@ uct_rc_mlx5_iface_unexp_consumed(uct_rc_mlx5_iface_common_t *iface,
 {
     uct_ib_mlx5_srq_seg_t *seg;
 
+    ucs_assertv(!UCS_STATUS_IS_ERR(status), "iface=%p: %p or %p returned: %s",
+                iface, iface->tm.eager_unexp.cb, iface->tm.rndv_unexp.cb,
+                ucs_status_string(status));
+
     seg = uct_ib_mlx5_srq_get_wqe(&iface->rx.srq, wqe_ctr);
 
     uct_rc_mlx5_iface_release_srq_seg(iface, seg, cqe, wqe_ctr,
@@ -1433,13 +1435,19 @@ uct_rc_mlx5_iface_common_poll_rx(uct_rc_mlx5_iface_common_t *iface,
 
     cqe = uct_rc_mlx5_iface_poll_rx_cq(iface, poll_flags);
     if (cqe == NULL) {
-        /* If no CQE - post receives */
+        /* If no CQE - post receives to prevent hang when:
+         * - RX buffers are limited and all are taken by the user.
+         * - All cqes are polled by the user, but new WQEs not posted due to
+         *   lack of RX buffers.
+         * Need to post new WQEs when some RX buffers are freed by the user.
+         */
         count = 0;
-        goto done;
+        goto out;
     }
 
     ucs_memory_cpu_load_fence();
-    UCS_STATS_UPDATE_COUNTER(iface->super.stats, UCT_RC_IFACE_STAT_RX_COMPLETION, 1);
+    UCS_STATS_UPDATE_COUNTER(iface->super.super.stats,
+                             UCT_IB_IFACE_STAT_RX_COMPLETION, 1);
 
     byte_len = ntohl(cqe->byte_cnt) & UCT_IB_MLX5_MP_RQ_BYTE_CNT_MASK;
     count    = 1;
@@ -1448,7 +1456,7 @@ uct_rc_mlx5_iface_common_poll_rx(uct_rc_mlx5_iface_common_t *iface,
         rc_hdr = uct_rc_mlx5_iface_common_data(iface, cqe, byte_len, &flags);
         uct_rc_mlx5_iface_common_am_handler(iface, cqe, rc_hdr, flags,
                                             byte_len, poll_flags);
-        goto done;
+        goto out_update_db;
     }
 
 #if IBV_HW_TM
@@ -1459,14 +1467,14 @@ uct_rc_mlx5_iface_common_poll_rx(uct_rc_mlx5_iface_common_t *iface,
          * could be done for specific CQE types only. */
         uct_rc_mlx5_iface_handle_filler_cqe(iface, cqe, poll_flags);
         count = 0;
-        goto done;
+        goto out_update_db;
     }
 
     /* Should be a fast path, because small (latency-critical) messages
      * are not supposed to be offloaded to the HW.  */
     if (ucs_likely(cqe->app_op == UCT_RC_MLX5_CQE_APP_OP_TM_UNEXPECTED)) {
         uct_rc_mlx5_iface_tag_handle_unexp(iface, cqe, byte_len, poll_flags);
-        goto done;
+        goto out_update_db;
     }
 
     switch (cqe->app_op) {
@@ -1534,7 +1542,9 @@ uct_rc_mlx5_iface_common_poll_rx(uct_rc_mlx5_iface_common_t *iface,
     }
 #endif
 
-done:
+out_update_db:
+    uct_ib_mlx5_update_db_cq_ci(&iface->cq[UCT_IB_DIR_RX]);
+out:
     max_batch = iface->super.super.config.rx_max_batch;
     if (ucs_unlikely(iface->super.rx.srq.available >= max_batch)) {
         if (poll_flags & UCT_RC_MLX5_POLL_FLAG_LINKED_LIST) {

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2016.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2016. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -16,8 +16,7 @@
 
 static inline size_t ucp_proto_max_packed_size()
 {
-    return ucs_max(sizeof(ucp_reply_hdr_t),
-                   sizeof(ucp_offload_ssend_hdr_t));
+    return ucs_max(sizeof(ucp_rndv_ack_hdr_t), sizeof(ucp_offload_ssend_hdr_t));
 }
 
 static size_t ucp_proto_pack(void *dest, void *arg)
@@ -25,15 +24,21 @@ static size_t ucp_proto_pack(void *dest, void *arg)
     ucp_request_t *req = arg;
     ucp_reply_hdr_t *rep_hdr;
     ucp_offload_ssend_hdr_t *off_rep_hdr;
+    ucp_rndv_ack_hdr_t *ack_hdr;
 
     switch (req->send.proto.am_id) {
     case UCP_AM_ID_EAGER_SYNC_ACK:
-    case UCP_AM_ID_RNDV_ATS:
-    case UCP_AM_ID_RNDV_ATP:
         rep_hdr = dest;
         rep_hdr->req_id = req->send.proto.remote_req_id;
         rep_hdr->status = req->send.proto.status;
         return sizeof(*rep_hdr);
+    case UCP_AM_ID_RNDV_ATS:
+    case UCP_AM_ID_RNDV_ATP:
+        ack_hdr               = dest;
+        ack_hdr->super.req_id = req->send.proto.remote_req_id;
+        ack_hdr->super.status = req->send.proto.status;
+        ack_hdr->size         = req->send.length;
+        return sizeof(*ack_hdr);
     case UCP_AM_ID_OFFLOAD_SYNC_ACK:
         off_rep_hdr = dest;
         off_rep_hdr->sender_tag = req->send.proto.sender_tag;
@@ -66,8 +71,9 @@ ucp_do_am_single(uct_pending_req_t *self, uint8_t am_id,
                     "packed_len=%zd max_packed_size=%zu", packed_len,
                     max_packed_size);
 
-        return uct_ep_am_short(ep->uct_eps[req->send.lane], am_id, buffer[0],
-                               &buffer[1], packed_len - sizeof(uint64_t));
+        return uct_ep_am_short(ucp_ep_get_lane(ep, req->send.lane), am_id,
+                               buffer[0], &buffer[1],
+                               packed_len - sizeof(uint64_t));
     } else {
         return ucp_do_am_bcopy_single(self, am_id, pack_cb);
     }

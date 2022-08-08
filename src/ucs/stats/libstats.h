@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2013.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2013. ALL RIGHTS RESERVED.
 * Copyright (C) Huawei Technologies Co., Ltd. 2021.  ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
@@ -64,34 +64,34 @@ struct ucs_stats_class {
  * relationship between them.
  * ucs_stats_filter_node is a data structure used to filter the counters
  * on the report.
- * Therre are 3 types of filtering: Full, Aggregate, and summary
+ * There are 3 types of filtering: Full, Aggregate, and summary
  * Following is an example of the data structures in aggregate mode:
  *
  *      ucs_stats_node                        ucs_stats_filter_node
  *      --------------                        ---------------------
  *
  *             +-----+                              +-----+
- *             | A-1 |............................> | A-1 |      
- *             +-----+                              +-----+     
- *               A A A                                A 
- *               | | |                                | 
+ *             | A-1 |............................> | A-1 |
+ *             +-----+                              +-----+
+ *               A A A                                A
+ *               | | |                                |
  *               | | +----------+                     |
  *               | |            |                     |
  *            +--+ +--+      +--+--+................. |
  *            |       |      | B-1 |                : |
- *            |       |      +-----+                : | 
+ *            |       |      +-----+                : |
  *            |    +-----+....|..A................. : |
  *            |    | B-2 |    |  |                : : |
  *            |    +-----+ <--+  |                V V |
- *       +-----+......|..........|.............> +-----+        
+ *       +-----+......|..........|.............> +-----+
  *       | B-3 |      ||         +---------------| B*  |
  *       +-----+ <----+                          +-----+
  *       cntr1                                   cntr1*
  *       cntr2                                   cntr2*
- *       cntr3                                   cntr3*   
- *                               
+ *       cntr3                                   cntr3*
+ *
  * unfiltered statistics report:
- * 
+ *
  *  A-1:
  *     B-1:
  *        cntr1: 11111
@@ -107,7 +107,7 @@ struct ucs_stats_class {
  *        cntr3: 33333
  *
  * filtered statistics report:
- * 
+ *
  *  A-1:
  *     B*:
  *        cntr1: 33333
@@ -120,7 +120,7 @@ struct ucs_stats_class {
 
 struct ucs_stats_node {
     ucs_stats_class_t        *cls;               /* Class info */
-    ucs_stats_node_t         *parent;            /* Hierachy structure */
+    ucs_stats_node_t         *parent;            /* Hierarchy structure */
     char                     name[UCS_STAT_NAME_MAX + 1];
                                                  /* instance name */
     ucs_list_link_t          list;               /* nodes sharing same parent */
@@ -168,7 +168,7 @@ ucs_status_t ucs_stats_serialize(FILE *stream, ucs_stats_node_t *root, int optio
  * De-serialize statistics.
  *
  * @param stream   Source data.
- * @param p_roo    Filled with tatistics node root.
+ * @param p_roo    Filled with statistics node root.
  *
  * @return UCS_ERR_NO_ELEM if hit EOF.
  */

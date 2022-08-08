@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2017.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2017. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -42,9 +42,10 @@ protected:
     void check_memory(void *address, void *expect, size_t size,
                       ucs_memory_type_t mem_type);
     void free_memory(void *address, ucs_memory_type_t mem_type);
-    void test_registration();
     static bool is_device_detected(ucs_memory_type_t mem_type);
     static void* alloc_thread(void *arg);
+    ucs_status_t reg_mem(unsigned flags, void *address, size_t length,
+                         uct_mem_h *memh_p);
 
     uct_md_h md() const {
         return m_md;
@@ -76,6 +77,6 @@ private:
 
 
 #define _UCT_MD_INSTANTIATE_TEST_CASE(_test_case, _cmpt_name) \
-    INSTANTIATE_TEST_CASE_P(_cmpt_name, _test_case, \
+    INSTANTIATE_TEST_SUITE_P(_cmpt_name, _test_case, \
                             testing::ValuesIn(_test_case::enum_mds(#_cmpt_name)));
 #endif

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2021.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2021. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -24,9 +24,24 @@ static inline ucp_ep_config_t *ucp_ep_config(ucp_ep_h ep)
     return &ep->worker->ep_config[ep->cfg_index];
 }
 
+static UCS_F_ALWAYS_INLINE uct_ep_h ucp_ep_get_lane(ucp_ep_h ep,
+                                                    ucp_lane_index_t lane_index)
+{
+    ucs_assert(lane_index != UCP_NULL_LANE);
+
+    return ep->uct_eps[lane_index];
+}
+
+static UCS_F_ALWAYS_INLINE void ucp_ep_set_lane(ucp_ep_h ep, size_t lane_index,
+                                                uct_ep_h uct_ep)
+{
+    ucs_assert(lane_index != UCP_NULL_LANE);
+
+    ep->uct_eps[lane_index] = uct_ep;
+}
+
 static inline ucp_lane_index_t ucp_ep_get_am_lane(ucp_ep_h ep)
 {
-    ucs_assert(ucp_ep_config(ep)->key.am_lane != UCP_NULL_LANE);
     return ep->am_lane;
 }
 
@@ -38,7 +53,6 @@ static inline ucp_lane_index_t ucp_ep_get_wireup_msg_lane(ucp_ep_h ep)
 
 static inline ucp_lane_index_t ucp_ep_get_tag_lane(ucp_ep_h ep)
 {
-    ucs_assert(ucp_ep_config(ep)->key.tag_lane != UCP_NULL_LANE);
     return ucp_ep_config(ep)->key.tag_lane;
 }
 
@@ -56,18 +70,24 @@ static inline int ucp_ep_config_key_has_tag_lane(const ucp_ep_config_key_t *key)
 
 static inline uct_ep_h ucp_ep_get_am_uct_ep(ucp_ep_h ep)
 {
-    return ep->uct_eps[ucp_ep_get_am_lane(ep)];
+    return ucp_ep_get_lane(ep, ucp_ep_get_am_lane(ep));
 }
 
 static inline uct_ep_h ucp_ep_get_tag_uct_ep(ucp_ep_h ep)
 {
-    return ep->uct_eps[ucp_ep_get_tag_lane(ep)];
+    return ucp_ep_get_lane(ep, ucp_ep_get_tag_lane(ep));
 }
 
 static inline ucp_rsc_index_t ucp_ep_get_rsc_index(ucp_ep_h ep, ucp_lane_index_t lane)
 {
     ucs_assert(lane < UCP_MAX_LANES); /* to suppress coverity */
     return ucp_ep_config(ep)->key.lanes[lane].rsc_index;
+}
+
+static inline const uct_tl_resource_desc_t *
+ucp_ep_get_tl_rsc(ucp_ep_h ep, ucp_lane_index_t lane)
+{
+    return &ep->worker->context->tl_rscs[ucp_ep_get_rsc_index(ep, lane)].tl_rsc;
 }
 
 static inline uint8_t ucp_ep_get_path_index(ucp_ep_h ep, ucp_lane_index_t lane)
@@ -82,12 +102,16 @@ static inline uct_iface_attr_t *ucp_ep_get_iface_attr(ucp_ep_h ep, ucp_lane_inde
 
 static inline size_t ucp_ep_get_max_bcopy(ucp_ep_h ep, ucp_lane_index_t lane)
 {
-    return ucp_ep_get_iface_attr(ep, lane)->cap.am.max_bcopy;
+    size_t max_bcopy = ucp_ep_get_iface_attr(ep, lane)->cap.am.max_bcopy;
+
+    return ucs_min(ucp_ep_config(ep)->key.lanes[lane].seg_size, max_bcopy);
 }
 
 static inline size_t ucp_ep_get_max_zcopy(ucp_ep_h ep, ucp_lane_index_t lane)
 {
-    return ucp_ep_get_iface_attr(ep, lane)->cap.am.max_zcopy;
+    size_t max_zcopy = ucp_ep_get_iface_attr(ep, lane)->cap.am.max_zcopy;
+
+    return ucs_min(ucp_ep_config(ep)->key.lanes[lane].seg_size, max_zcopy);
 }
 
 static inline size_t ucp_ep_get_max_iov(ucp_ep_h ep, ucp_lane_index_t lane)
@@ -122,38 +146,11 @@ static inline const uct_md_attr_t* ucp_ep_md_attr(ucp_ep_h ep, ucp_lane_index_t 
     return &context->tl_mds[ucp_ep_md_index(ep, lane)].attr;
 }
 
-static UCS_F_ALWAYS_INLINE ucp_ep_ext_gen_t* ucp_ep_ext_gen(ucp_ep_h ep)
-{
-    return (ucp_ep_ext_gen_t*)ucs_strided_elem_get(ep, 0, 1);
-}
-
-static UCS_F_ALWAYS_INLINE ucp_ep_ext_proto_t* ucp_ep_ext_proto(ucp_ep_h ep)
-{
-    return (ucp_ep_ext_proto_t*)ucs_strided_elem_get(ep, 0, 2);
-}
-
-static UCS_F_ALWAYS_INLINE ucp_ep_h ucp_ep_from_ext_gen(ucp_ep_ext_gen_t *ep_ext)
-{
-    return (ucp_ep_h)ucs_strided_elem_get(ep_ext, 1, 0);
-}
-
-static UCS_F_ALWAYS_INLINE ucp_ep_h ucp_ep_from_ext_proto(ucp_ep_ext_proto_t *ep_ext)
-{
-    return (ucp_ep_h)ucs_strided_elem_get(ep_ext, 2, 0);
-}
-
 static UCS_F_ALWAYS_INLINE ucp_ep_flush_state_t* ucp_ep_flush_state(ucp_ep_h ep)
 {
     ucs_assert(ep->flags & UCP_EP_FLAG_FLUSH_STATE_VALID);
     ucs_assert(!(ep->flags & UCP_EP_FLAG_ON_MATCH_CTX));
-    ucs_assert(!(ep->flags & UCP_EP_FLAG_CLOSE_REQ_VALID));
-    return &ucp_ep_ext_gen(ep)->flush_state;
-}
-
-static UCS_F_ALWAYS_INLINE ucp_ep_ext_control_t* ucp_ep_ext_control(ucp_ep_h ep)
-{
-    ucs_assert(ucp_ep_ext_gen(ep)->control_ext != NULL);
-    return ucp_ep_ext_gen(ep)->control_ext;
+    return &ep->ext->flush_state;
 }
 
 static UCS_F_ALWAYS_INLINE void ucp_ep_update_flags(
@@ -176,13 +173,13 @@ static UCS_F_ALWAYS_INLINE ucs_ptr_map_key_t ucp_ep_remote_id(ucp_ep_h ep)
         return UCS_PTR_MAP_KEY_INVALID;
     }
 #endif
-    return ucp_ep_ext_control(ep)->remote_ep_id;
+    return ep->ext->remote_ep_id;
 }
 
 static UCS_F_ALWAYS_INLINE ucs_ptr_map_key_t ucp_ep_local_id(ucp_ep_h ep)
 {
-    ucs_assert(ucp_ep_ext_control(ep)->local_ep_id != UCS_PTR_MAP_KEY_INVALID);
-    return ucp_ep_ext_control(ep)->local_ep_id;
+    ucs_assert(ep->ext->local_ep_id != UCS_PTR_MAP_KEY_INVALID);
+    return ep->ext->local_ep_id;
 }
 
 /*
@@ -203,15 +200,16 @@ static inline void ucp_ep_update_remote_id(ucp_ep_h ep,
                                            ucs_ptr_map_key_t remote_id)
 {
     if (ep->flags & UCP_EP_FLAG_REMOTE_ID) {
-        ucs_assertv(remote_id == ucp_ep_ext_control(ep)->remote_ep_id,
-                    "ep=%p rkey=0x%" PRIxPTR " ep->remote_id=0x%" PRIxPTR,
-                    ep, remote_id, ucp_ep_ext_control(ep)->remote_ep_id);
+        ucs_assertv(remote_id == ep->ext->remote_ep_id,
+                    "ep=%p flags=0x%" PRIx32 " rkey=0x%" PRIxPTR
+                    " ep->remote_id=0x%" PRIxPTR, ep, ep->flags, remote_id,
+                    ep->ext->remote_ep_id);
     }
 
     ucs_assert(remote_id != UCS_PTR_MAP_KEY_INVALID);
     ucs_trace("ep %p: set remote_id to 0x%" PRIxPTR, ep, remote_id);
     ucp_ep_update_flags(ep, UCP_EP_FLAG_REMOTE_ID, 0);
-    ucp_ep_ext_control(ep)->remote_ep_id = remote_id;
+    ep->ext->remote_ep_id = remote_id;
 }
 
 static inline const char* ucp_ep_peer_name(ucp_ep_h ep)
@@ -221,28 +219,6 @@ static inline const char* ucp_ep_peer_name(ucp_ep_h ep)
 #else
     return UCP_WIREUP_EMPTY_PEER_NAME;
 #endif
-}
-
-static inline void ucp_ep_flush_state_reset(ucp_ep_h ep)
-{
-    ucp_ep_flush_state_t *flush_state = &ucp_ep_ext_gen(ep)->flush_state;
-
-    ucs_assert(!(ep->flags & UCP_EP_FLAG_ON_MATCH_CTX));
-    ucs_assert(!(ep->flags & UCP_EP_FLAG_FLUSH_STATE_VALID) ||
-               ((flush_state->send_sn == 0) &&
-                (flush_state->cmpl_sn == 0) &&
-                ucs_hlist_is_empty(&flush_state->reqs)));
-
-    flush_state->send_sn = 0;
-    flush_state->cmpl_sn = 0;
-    ucs_hlist_head_init(&flush_state->reqs);
-    ucp_ep_update_flags(ep, UCP_EP_FLAG_FLUSH_STATE_VALID, 0);
-}
-
-static inline void ucp_ep_flush_state_invalidate(ucp_ep_h ep)
-{
-    ucs_assert(ucs_hlist_is_empty(&ucp_ep_flush_state(ep)->reqs));
-    ucp_ep_update_flags(ep, 0, UCP_EP_FLAG_FLUSH_STATE_VALID);
 }
 
 /* get index of the local component which can reach a remote memory domain */

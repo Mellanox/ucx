@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
 * Copyright (C) Huawei Technologies Co., Ltd. 2020.  ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
@@ -117,10 +117,35 @@ BEGIN_C_DECLS
 #define ucs_count_trailing_zero_bits(_n) \
     ((sizeof(_n) <= 4) ? __builtin_ctz((uint32_t)(_n)) : __builtin_ctzl(_n))
 
-/* Returns the number of 1-bits by _idx mask */
-#define ucs_bitmap2idx(_map, _idx) \
-    ucs_popcount((_map) & (UCS_MASK(_idx)))
+/* Returns the number of leading 0-bits in _n.
+ * If _n is 0, the result is undefined
+ */
+#define ucs_count_leading_zero_bits(_n) \
+    ((sizeof(_n) <= 4) ? __builtin_clz((uint32_t)(_n)) : __builtin_clzl(_n))
 
+/* Returns the number of bits lower than 'bit_index' that are set in 'mask'
+ * For example: ucs_idx2bitmap(mask=0xF0, idx=6) returns 2
+ */
+static inline unsigned ucs_bitmap2idx(uint64_t mask, unsigned bit_index)
+{
+    return ucs_popcount(mask & UCS_MASK(bit_index));
+}
+
+/* Returns the bit index of the 'idx'-th set bit in 'mask'
+ * For example: ucs_idx2bitmap(mask=0xF0, idx=1) returns 5
+ */
+static inline unsigned ucs_idx2bitmap(uint64_t mask, int idx)
+{
+    unsigned bit_index = 0;
+
+    while ((mask != 0) && (idx >= 0)) {
+        bit_index = ucs_count_trailing_zero_bits(mask);
+        mask     &= ~UCS_BIT(bit_index);
+        --idx;
+    }
+
+    return bit_index;
+}
 
 /**
  * Count how many bits at the end of the buffer are equal to zero.
@@ -175,20 +200,20 @@ ucs_count_ptr_trailing_zero_bits(const void *ptr, uint64_t bit_length)
 static inline int
 ucs_bitwise_is_equal(const void *ptr1, const void *ptr2, uint64_t bit_length)
 {
-    size_t length      = bit_length / 8;
-    unsigned remainder = bit_length % 8;
+    size_t length          = bit_length / 8;
+    unsigned remainder_val = bit_length % 8;
 
     if (memcmp(ptr1, ptr2, length) != 0) {
         return 0;
     }
 
-    if (remainder == 0) {
+    if (remainder_val == 0) {
         return 1;
     }
 
     /* Compare up to 7 last bits */
-    return ((*((uint8_t*)ptr1 + length) & ~UCS_MASK(8 - remainder)) ==
-            (*((uint8_t*)ptr2 + length) & ~UCS_MASK(8 - remainder)));
+    return ((*((uint8_t*)ptr1 + length) & ~UCS_MASK(8 - remainder_val)) ==
+            (*((uint8_t*)ptr2 + length) & ~UCS_MASK(8 - remainder_val)));
 }
 
 END_C_DECLS

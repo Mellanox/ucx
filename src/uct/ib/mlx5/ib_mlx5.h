@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 * Copyright (C) ARM Ltd. 2016.  ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
@@ -32,14 +32,9 @@
 #  endif
 #endif
 
-#if HAVE_INFINIBAND_MLX5DV_H
-#  include <infiniband/mlx5dv.h>
-#else
-#  include <infiniband/mlx5_hw.h>
-#  include <uct/ib/mlx5/exp/ib_mlx5_hw.h>
-#endif
 #include <uct/ib/mlx5/dv/ib_mlx5_dv.h>
 
+#include <infiniband/mlx5dv.h>
 #include <netinet/in.h>
 #include <endian.h>
 #include <string.h>
@@ -68,6 +63,8 @@
 #define UCT_IB_MLX5_ATOMIC_MODE          3
 #define UCT_IB_MLX5_CQE_FLAG_L3_IN_DATA  UCS_BIT(28) /* GRH/IP in the receive buffer */
 #define UCT_IB_MLX5_CQE_FLAG_L3_IN_CQE   UCS_BIT(29) /* GRH/IP in the CQE */
+#define UCT_IB_MLX5_CQE_FORMAT_MASK      0xc
+#define UCT_IB_MLX5_MINICQE_ARR_MAX_SIZE 8
 #define UCT_IB_MLX5_MP_RQ_BYTE_CNT_MASK  0x0000FFFF  /* Byte count mask for multi-packet RQs */
 #define UCT_IB_MLX5_MP_RQ_FIRST_MSG_FLAG UCS_BIT(29) /* MP first packet indication */
 #define UCT_IB_MLX5_MP_RQ_LAST_MSG_FLAG  UCS_BIT(30) /* MP last packet indication */
@@ -76,11 +73,13 @@
 #if HAVE_DECL_MLX5DV_UAR_ALLOC_TYPE_BF
 #  define UCT_IB_MLX5_UAR_ALLOC_TYPE_WC MLX5DV_UAR_ALLOC_TYPE_BF
 #else
-#  define UCT_IB_MLX5_UAR_ALLOC_TYPE_WC 0
+#  define UCT_IB_MLX5_UAR_ALLOC_TYPE_WC 0x0
 #endif
 
 #if HAVE_DECL_MLX5DV_UAR_ALLOC_TYPE_NC
 #  define UCT_IB_MLX5_UAR_ALLOC_TYPE_NC MLX5DV_UAR_ALLOC_TYPE_NC
+#else
+#  define UCT_IB_MLX5_UAR_ALLOC_TYPE_NC 0x1
 #endif
 
 #define UCT_IB_MLX5_OPMOD_EXT_ATOMIC(_log_arg_size) \
@@ -132,12 +131,12 @@ struct mlx5_grh_av {
       (_av_size) + \
       sizeof(struct mlx5_wqe_inl_data_seg)))
 
-#define UCT_IB_MLX5_SET_BASE_AV(to_base_av, from_base_av) \
+#define UCT_IB_MLX5_SET_BASE_AV(_to_base_av, _from_base_av) \
     do { \
-        (to_base_av)->dqp_dct      = (from_base_av)->dqp_dct; \
-        (to_base_av)->stat_rate_sl = (from_base_av)->stat_rate_sl; \
-        (to_base_av)->fl_mlid      = (from_base_av)->fl_mlid; \
-        (to_base_av)->rlid         = (from_base_av)->rlid; \
+        (_to_base_av)->dqp_dct      = (_from_base_av)->dqp_dct; \
+        (_to_base_av)->stat_rate_sl = (_from_base_av)->stat_rate_sl; \
+        (_to_base_av)->fl_mlid      = (_from_base_av)->fl_mlid; \
+        (_to_base_av)->rlid         = (_from_base_av)->rlid; \
     } while (0)
 
 #define UCT_IB_MLX5_AM_ZCOPY_MAX_HDR(_av_size) \
@@ -158,30 +157,38 @@ struct mlx5_grh_av {
 #define UCT_IB_MLX5_DEVX_EVENT_TYPE_MASK  0xffff
 #define UCT_IB_MLX5_DEVX_EVENT_DATA_SHIFT 16
 
+#define UCT_IB_MLX5_DEVX_ECE_TRIG_RESP    0x10000000
+
 enum {
     /* Device supports KSM */
-    UCT_IB_MLX5_MD_FLAG_KSM              = UCS_BIT(0),
+    UCT_IB_MLX5_MD_FLAG_KSM                  = UCS_BIT(0),
     /* Device supports DEVX */
-    UCT_IB_MLX5_MD_FLAG_DEVX             = UCS_BIT(1),
+    UCT_IB_MLX5_MD_FLAG_DEVX                 = UCS_BIT(1),
     /* Device supports TM DC */
-    UCT_IB_MLX5_MD_FLAG_DC_TM            = UCS_BIT(2),
+    UCT_IB_MLX5_MD_FLAG_DC_TM                = UCS_BIT(2),
     /* Device supports MP RQ */
-    UCT_IB_MLX5_MD_FLAG_MP_RQ            = UCS_BIT(3),
+    UCT_IB_MLX5_MD_FLAG_MP_RQ                = UCS_BIT(3),
     /* Device supports creation of indirect MR with atomics access rights */
-    UCT_IB_MLX5_MD_FLAG_INDIRECT_ATOMICS = UCS_BIT(4),
+    UCT_IB_MLX5_MD_FLAG_INDIRECT_ATOMICS     = UCS_BIT(4),
     /* Device supports RMP to create SRQ for AM */
-    UCT_IB_MLX5_MD_FLAG_RMP              = UCS_BIT(5),
+    UCT_IB_MLX5_MD_FLAG_RMP                  = UCS_BIT(5),
     /* Device supports querying bitmask of OOO (AR) states per SL */
-    UCT_IB_MLX5_MD_FLAG_OOO_SL_MASK      = UCS_BIT(6),
+    UCT_IB_MLX5_MD_FLAG_OOO_SL_MASK          = UCS_BIT(6),
     /* Device has LAG */
-    UCT_IB_MLX5_MD_FLAG_LAG              = UCS_BIT(7),
+    UCT_IB_MLX5_MD_FLAG_LAG                  = UCS_BIT(7),
     /* Device supports CQE V1 */
-    UCT_IB_MLX5_MD_FLAG_CQE_V1           = UCS_BIT(8),
+    UCT_IB_MLX5_MD_FLAG_CQE_V1               = UCS_BIT(8),
     /* Device supports first fragment indication for MP XRQ */
-    UCT_IB_MLX5_MD_FLAG_MP_XRQ_FIRST_MSG = UCS_BIT(9),
+    UCT_IB_MLX5_MD_FLAG_MP_XRQ_FIRST_MSG     = UCS_BIT(9),
+    /* Device supports 64B CQE zipping */
+    UCT_IB_MLX5_MD_FLAG_CQE64_ZIP            = UCS_BIT(10),
+    /* Device supports 128B CQE zipping */
+    UCT_IB_MLX5_MD_FLAG_CQE128_ZIP           = UCS_BIT(11),
+    /* Device performance is optimized when RDMA_WRITE is not used */
+    UCT_IB_MLX5_MD_FLAG_NO_RDMA_WR_OPTIMIZED = UCS_BIT(12),
 
     /* Object to be created by DevX */
-    UCT_IB_MLX5_MD_FLAG_DEVX_OBJS_SHIFT  = 10,
+    UCT_IB_MLX5_MD_FLAG_DEVX_OBJS_SHIFT  = 16,
     UCT_IB_MLX5_MD_FLAG_DEVX_RC_QP       = UCT_IB_MLX5_MD_FLAG_DEVX_OBJS(RCQP),
     UCT_IB_MLX5_MD_FLAG_DEVX_RC_SRQ      = UCT_IB_MLX5_MD_FLAG_DEVX_OBJS(RCSRQ),
     UCT_IB_MLX5_MD_FLAG_DEVX_DCT         = UCT_IB_MLX5_MD_FLAG_DEVX_OBJS(DCT),
@@ -212,7 +219,40 @@ typedef struct uct_ib_mlx5_devx_umem {
     struct mlx5dv_devx_umem  *mem;
     size_t                   size;
 } uct_ib_mlx5_devx_umem_t;
+
+
+/**
+ * LRU cache entry of indirect rkeys
+ */
+typedef struct uct_ib_mlx5_mem_lru_entry {
+    /**
+     * Entry in the linked list
+     */
+    ucs_list_link_t        list;
+
+    /**
+     * Pointer to MR object
+     */
+    struct mlx5dv_devx_obj *indirect_mr;
+
+    /**
+     * RKey value, also used as a key in hash
+     */
+    uint32_t               rkey;
+
+    /**
+     * Whether the associated indirect_mr is created only to prevent reusing the
+     * same key (true) or it's referenced by an existing memory handler (false).
+     * If true, we need to destroy the indirect_mr when removed from LRU.
+     */
+    uint8_t                is_dummy;
+} uct_ib_mlx5_mem_lru_entry_t;
+
+
+KHASH_MAP_INIT_INT(rkeys, uct_ib_mlx5_mem_lru_entry_t*);
+
 #endif
+
 
 /**
  * MLX5 IB memory domain.
@@ -222,15 +262,26 @@ typedef struct uct_ib_mlx5_md {
     uint32_t                 flags;
     ucs_mpool_t              dbrec_pool;
     ucs_recursive_spinlock_t dbrec_lock;
-#if HAVE_EXP_UMR
-    struct ibv_qp            *umr_qp;   /* special QP for creating UMR */
-    struct ibv_cq            *umr_cq;   /* special CQ for creating UMR */
-#endif
-
 #if HAVE_DEVX
     void                     *zero_buf;
     uct_ib_mlx5_devx_umem_t  zero_mem;
+
+    struct {
+        ucs_list_link_t      list;
+        khash_t(rkeys)       hash;
+        size_t               count;
+    } lru_rkeys;
+
+    struct ibv_mr            *flush_mr;
+    struct mlx5dv_devx_obj   *flush_dvmr;
+    uint8_t                  mkey_tag;
 #endif
+    struct {
+        size_t dc;
+        size_t ud;
+    } dv_tx_wqe_ratio;
+    /* The maximum number of outstanding RDMA Read/Atomic operations per DC QP. */
+    uint8_t                  max_rd_atomic_dc;
 } uct_ib_mlx5_md_t;
 
 
@@ -240,6 +291,8 @@ typedef enum {
     UCT_IB_MLX5_MMIO_MODE_BF_POST_MT, /* BF with order, can be used by multiple
                                          serialized threads */
     UCT_IB_MLX5_MMIO_MODE_DB,         /* 8-byte doorbell (with the mandatory flush) */
+    UCT_IB_MLX5_MMIO_MODE_DB_LOCK,    /* 8-byte doorbell with locking, can be
+                                         used by multiple concurrent threads */
     UCT_IB_MLX5_MMIO_MODE_AUTO,       /* Auto-select according to driver/HW capabilities
                                          and multi-thread support level */
     UCT_IB_MLX5_MMIO_MODE_LAST
@@ -255,6 +308,7 @@ typedef struct uct_ib_mlx5_iface_config {
 #endif
     uct_ib_mlx5_mmio_mode_t  mmio_mode;
     ucs_ternary_auto_value_t ar_enable;
+    ucs_ternary_auto_value_t cqe_zipping_enable;
 } uct_ib_mlx5_iface_config_t;
 
 
@@ -302,16 +356,48 @@ typedef struct uct_ib_mlx5_srq {
 } uct_ib_mlx5_srq_t;
 
 
+/**
+ * MLX5 IB mini CQE structure. This structure is used to store unique
+ * CQE information during CQE compression.
+ */
+typedef struct {
+    uint16_t wqe_counter;
+    uint8_t  s_wqe_opcode;
+    uint8_t  reserved2;
+    uint32_t byte_cnt;
+} uct_ib_mlx5_mini_cqe8_t;
+
+
+/**
+ * This structure contains the data required for unzipping the CQEs
+ */
+typedef struct {
+    /* CQE that contains the common information for all compression block */
+    struct mlx5_cqe64       title;
+    /* Array of miniCQEs each of which contains unique CQE information */
+    uct_ib_mlx5_mini_cqe8_t mini_arr[UCT_IB_MLX5_MINICQE_ARR_MAX_SIZE];
+    /* Size of compression block */
+    uint32_t                block_size;
+    /* Number of unhandled CQE in compression block */
+    uint32_t                current_idx;
+    /* Title CQ index */
+    uint32_t                title_cq_idx;
+    /* Title wqe counter */
+    uint16_t                wqe_counter;
+} uct_ib_mlx5_cq_unzip_t;
+
+
 /* Completion queue */
 typedef struct uct_ib_mlx5_cq {
-    void               *cq_buf;
-    unsigned           cq_ci;
-    unsigned           cq_sn;
-    unsigned           cq_length;
-    unsigned           cqe_size_log;
-    unsigned           cq_num;
-    void               *uar;
-    volatile uint32_t  *dbrec;
+    void                   *cq_buf;
+    unsigned               cq_ci;
+    unsigned               cq_sn;
+    unsigned               cq_length;
+    unsigned               cqe_size_log;
+    unsigned               cq_num;
+    void                   *uar;
+    volatile uint32_t      *dbrec;
+    uct_ib_mlx5_cq_unzip_t cq_unzip;
 } uct_ib_mlx5_cq_t;
 
 
@@ -323,6 +409,7 @@ typedef struct uct_ib_mlx5_mmio_reg {
         uintptr_t               uint;
     } addr;
     uct_ib_mlx5_mmio_mode_t     mode;
+    ucs_spinlock_t              db_lock;
 } uct_ib_mlx5_mmio_reg_t;
 
 
@@ -338,12 +425,8 @@ typedef struct uct_ib_mlx5_devx_uar {
 /* resource domain */
 typedef struct uct_ib_mlx5_res_domain {
     uct_worker_tl_data_t        super;
-#ifdef HAVE_IBV_EXP_RES_DOMAIN
-    struct ibv_exp_res_domain   *ibv_domain;
-#elif HAVE_DECL_IBV_ALLOC_TD
     struct ibv_td               *td;
     struct ibv_pd               *pd;
-#endif
 } uct_ib_mlx5_res_domain_t;
 
 
@@ -352,6 +435,7 @@ typedef struct uct_ib_mlx5_qp_attr {
     uct_ib_mlx5_mmio_mode_t     mmio_mode;
     uint32_t                    uidx;
     int                         full_handshake;
+    int                         rdma_wr_disabled;
 } uct_ib_mlx5_qp_attr_t;
 
 
@@ -361,12 +445,7 @@ typedef struct uct_ib_mlx5_qp {
     uint32_t                           qp_num;
     union {
         struct {
-            union {
-                struct ibv_qp          *qp;
-#ifdef HAVE_DC_EXP
-                struct ibv_exp_dct     *dct;
-#endif
-            };
+            struct ibv_qp              *qp;
             uct_ib_mlx5_res_domain_t   *rd;
         } verbs;
 #if HAVE_DEVX
@@ -393,7 +472,7 @@ typedef struct uct_ib_mlx5_txwq {
     uint16_t                    bb_max;
     uint16_t                    sig_pi;     /* PI for last signaled WQE */
 #if UCS_ENABLE_ASSERT
-    uint16_t                    hw_ci;
+    uint16_t                    hw_ci; /* First BB index of last completed WQE */
     uint8_t                     flags; /* Debug flags */
 #endif
     uct_ib_fence_info_t         fi;
@@ -502,7 +581,7 @@ ucs_status_t uct_ib_mlx5_iface_create_qp(uct_ib_iface_t *iface,
                                          uct_ib_mlx5_qp_t *qp,
                                          uct_ib_mlx5_qp_attr_t *attr);
 
-ucs_status_t uct_ib_mlx5_modify_qp_state(uct_ib_mlx5_md_t *md,
+ucs_status_t uct_ib_mlx5_modify_qp_state(uct_ib_iface_t *iface,
                                          uct_ib_mlx5_qp_t *qp,
                                          enum ibv_qp_state state);
 
@@ -515,9 +594,12 @@ void uct_ib_mlx5_destroy_qp(uct_ib_mlx5_md_t *md, uct_ib_mlx5_qp_t *qp);
 /**
  * Create CQ with DV
  */
-ucs_status_t uct_ib_mlx5_create_cq(uct_ib_iface_t *iface, uct_ib_dir_t dir,
-                                   const uct_ib_iface_init_attr_t *init_attr,
-                                   int preferred_cpu, size_t inl);
+ucs_status_t
+uct_ib_mlx5_create_cq(uct_ib_iface_t *iface, uct_ib_dir_t dir,
+                      const uct_ib_mlx5_iface_config_t *mlx5_config,
+                      const uct_ib_iface_config_t *ib_config,
+                      const uct_ib_iface_init_attr_t *init_attr,
+                      uct_ib_mlx5_cq_t *mlx5_cq, int preferred_cpu, size_t inl);
 
 extern ucs_config_field_t uct_ib_mlx5_iface_config_table[];
 
@@ -537,15 +619,42 @@ ucs_status_t uct_ib_mlx5_get_compact_av(uct_ib_iface_t *iface, int *compact_av);
 ucs_status_t uct_ib_mlx5dv_arm_cq(uct_ib_mlx5_cq_t *cq, int solicited);
 
 /**
+ * Initialize the CQE unzipping related entities.
+ *
+ * @param title_cqe The CQE that contains the title of the compression block.
+ * @param cq        CQ that contains the title.
+ */
+void uct_ib_mlx5_iface_cqe_unzip_init(struct mlx5_cqe64 *title_cqe,
+                                      uct_ib_mlx5_cq_t *cq);
+
+/**
+ * Unzip the next CQE. Should be used only when cq_unzip->current_idx > 0.
+ *
+ * @param cq CQ that contains detected but unhandled zipped CQEs
+ *           (cq_unzip->current_idx > 0).
+ *
+ * @return Next unzipped CQE.
+ */
+struct mlx5_cqe64 *uct_ib_mlx5_iface_cqe_unzip(uct_ib_mlx5_cq_t *cq);
+
+/**
+ * Check for completion.
+ */
+struct mlx5_cqe64 *
+uct_ib_mlx5_check_completion(uct_ib_iface_t *iface, uct_ib_mlx5_cq_t *cq,
+                             struct mlx5_cqe64 *cqe);
+
+/**
  * Check for completion with error.
  */
-void uct_ib_mlx5_check_completion(uct_ib_iface_t *iface, uct_ib_mlx5_cq_t *cq,
-                                  struct mlx5_cqe64 *cqe);
+void uct_ib_mlx5_check_completion_with_err(uct_ib_iface_t *iface,
+                                           uct_ib_mlx5_cq_t *cq,
+                                           struct mlx5_cqe64 *cqe);
 
 ucs_status_t
 uct_ib_mlx5_get_mmio_mode(uct_priv_worker_t *worker,
                           uct_ib_mlx5_mmio_mode_t cfg_mmio_mode,
-                          unsigned bf_size,
+                          int need_lock, unsigned bf_size,
                           uct_ib_mlx5_mmio_mode_t *mmio_mode);
 
 /**
@@ -605,6 +714,10 @@ ucs_status_t uct_ib_mlx5_devx_uar_init(uct_ib_mlx5_devx_uar_t *uar,
 
 void uct_ib_mlx5_devx_uar_cleanup(uct_ib_mlx5_devx_uar_t *uar);
 
+void uct_ib_mlx5_txwq_validate_always(uct_ib_mlx5_txwq_t *wq, uint16_t num_bb,
+                                      int hw_ci_updated);
+
+
 /**
  * DEVX QP API
  */
@@ -612,6 +725,8 @@ void uct_ib_mlx5_devx_uar_cleanup(uct_ib_mlx5_devx_uar_t *uar);
 #if HAVE_DEVX
 
 ucs_status_t uct_ib_mlx5_devx_create_qp(uct_ib_iface_t *iface,
+                                        const uct_ib_mlx5_cq_t *send_cq,
+                                        const uct_ib_mlx5_cq_t *recv_cq,
                                         uct_ib_mlx5_qp_t *qp,
                                         uct_ib_mlx5_txwq_t *tx,
                                         uct_ib_mlx5_qp_attr_t *attr);
@@ -624,6 +739,24 @@ ucs_status_t uct_ib_mlx5_devx_modify_qp_state(uct_ib_mlx5_qp_t *qp,
                                               enum ibv_qp_state state);
 
 void uct_ib_mlx5_devx_destroy_qp(uct_ib_mlx5_md_t *md, uct_ib_mlx5_qp_t *qp);
+
+ucs_status_t uct_ib_mlx5_devx_obj_modify(struct mlx5dv_devx_obj *obj,
+                                         const void *in, size_t inlen,
+                                         void *out, size_t outlen,
+                                         char *msg_arg);
+
+struct mlx5dv_devx_obj *
+uct_ib_mlx5_devx_obj_create(struct ibv_context *context, const void *in,
+                            size_t inlen, void *out, size_t outlen,
+                            char *msg_arg);
+
+ucs_status_t
+uct_ib_mlx5_devx_obj_destroy(struct mlx5dv_devx_obj *obj, char *msg_arg);
+
+ucs_status_t uct_ib_mlx5_devx_general_cmd(struct ibv_context *context,
+                                          const void *in, size_t inlen,
+                                          void *out, size_t outlen,
+                                          char *msg_arg, int silent);
 
 ucs_status_t uct_ib_mlx5_devx_query_ooo_sl_mask(uct_ib_mlx5_md_t *md,
                                                 uint8_t port_num,
@@ -641,7 +774,7 @@ uct_ib_mlx5_devx_query_qp_peer_info(uct_ib_iface_t *iface, uct_ib_mlx5_qp_t *qp,
 static inline ucs_status_t
 uct_ib_mlx5_md_buf_alloc(uct_ib_mlx5_md_t *md, size_t size, int silent,
                          void **buf_p, uct_ib_mlx5_devx_umem_t *mem,
-                         char *name)
+                         int access_mode, char *name)
 {
     ucs_log_level_t level = silent ? UCS_LOG_LEVEL_DEBUG : UCS_LOG_LEVEL_ERROR;
     ucs_status_t status;
@@ -664,7 +797,8 @@ uct_ib_mlx5_md_buf_alloc(uct_ib_mlx5_md_t *md, size_t size, int silent,
     }
 
     mem->size = size;
-    mem->mem  = mlx5dv_devx_umem_reg(md->super.dev.ibv_context, buf, size, 0);
+    mem->mem  = mlx5dv_devx_umem_reg(md->super.dev.ibv_context, buf, size,
+                                     access_mode);
     if (mem->mem == NULL) {
         ucs_log(level, "mlx5dv_devx_umem_reg() failed: %m");
         status = UCS_ERR_NO_MEMORY;
@@ -680,7 +814,7 @@ err_dofork:
     }
 err_free:
     ucs_free(buf);
-
+    *buf_p = NULL; /* To suppress compiler warning */
     return status;
 }
 
@@ -707,6 +841,8 @@ uct_ib_mlx5_md_buf_free(uct_ib_mlx5_md_t *md, void *buf, uct_ib_mlx5_devx_umem_t
 
 static inline ucs_status_t
 uct_ib_mlx5_devx_create_qp(uct_ib_iface_t *iface,
+                           const uct_ib_mlx5_cq_t *send_cq,
+                           const uct_ib_mlx5_cq_t *recv_cq,
                            uct_ib_mlx5_qp_t *qp,
                            uct_ib_mlx5_txwq_t *tx,
                            uct_ib_mlx5_qp_attr_t *attr)
@@ -738,6 +874,8 @@ uct_ib_mlx5_devx_query_qp_peer_info(uct_ib_iface_t *iface, uct_ib_mlx5_qp_t *qp,
 static inline void uct_ib_mlx5_devx_destroy_qp(uct_ib_mlx5_md_t *md, uct_ib_mlx5_qp_t *qp) { }
 
 #endif
+
+size_t uct_ib_mlx5_devx_sq_length(size_t tx_qp_length);
 
 ucs_status_t
 uct_ib_mlx5_select_sl(const uct_ib_iface_config_t *ib_config,

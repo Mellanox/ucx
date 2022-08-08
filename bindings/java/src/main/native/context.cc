@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Mellanox Technologies Ltd. 2019. ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -173,7 +173,10 @@ Java_org_openucx_jucx_ucp_UcpContext_memoryMapNative(JNIEnv *env, jobject ctx,
     attr.field_mask = UCP_MEM_ATTR_FIELD_ADDRESS | UCP_MEM_ATTR_FIELD_LENGTH |
                       UCP_MEM_ATTR_FIELD_MEM_TYPE;
 
-    ucp_mem_query(memh, &attr);
+    status = ucp_mem_query(memh, &attr);
+    if (status != UCS_OK) {
+        JNU_ThrowExceptionByStatus(env, status);
+    }
 
     // Construct UcpMemory class
     jclass jucx_mem_cls = env->FindClass("org/openucx/jucx/ucp/UcpMemory");

@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -12,15 +12,17 @@
 #include <ucs/sys/module.h>
 #include <ucs/arch/cpu.h>
 #include <ucs/config/parser.h>
+#include <ucs/config/ucm_opts.h>
 #include <ucs/debug/debug_int.h>
 #include <ucs/debug/log.h>
 #include <ucs/debug/memtrack_int.h>
 #include <ucs/profile/profile.h>
+#include <ucs/memory/memtype_cache.h>
 #include <ucs/stats/stats.h>
 #include <ucs/async/async.h>
 #include <ucs/sys/lib.h>
 #include <ucs/sys/sys.h>
-#include <ucs/sys/topo.h>
+#include <ucs/sys/topo/base/topo.h>
 #include <ucs/sys/math.h>
 
 
@@ -86,13 +88,15 @@ static void ucs_modules_load()
     UCS_MODULE_FRAMEWORK_LOAD(ucs, UCS_MODULE_LOAD_FLAG_GLOBAL);
 }
 
-static void UCS_F_CTOR ucs_init()
+void UCS_F_CTOR ucs_init()
 {
     ucs_status_t status;
 
     ucs_check_cpu_flags();
     ucs_log_early_init(); /* Must be called before all others */
     ucs_global_opts_init();
+    ucs_init_ucm_opts();
+    ucs_memtype_cache_global_init();
     ucs_cpu_init();
     ucs_log_init();
 #ifdef ENABLE_STATS
@@ -127,5 +131,8 @@ static void UCS_F_DTOR ucs_cleanup(void)
 #ifdef ENABLE_STATS
     ucs_stats_cleanup();
 #endif
+    ucs_memtype_cache_cleanup();
+    ucs_cleanup_ucm_opts();
+    ucs_global_opts_cleanup();
     ucs_log_cleanup();
 }

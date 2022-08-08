@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2019.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -27,6 +27,15 @@ typedef struct {
     uint64_t                  req_id;
     ucs_status_t              status;
 } UCS_S_PACKED ucp_reply_hdr_t;
+
+
+/**
+ * Header for transaction with offset
+ */
+typedef struct {
+    uint64_t req_id;
+    size_t   offset;
+} UCS_S_PACKED ucp_request_data_hdr_t;
 
 
 ucs_status_t

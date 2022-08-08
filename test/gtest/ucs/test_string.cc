@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -23,6 +23,11 @@ protected:
         ucs_string_buffer_cleanup(&mask_str);
     }
 };
+
+UCS_TEST_F(test_string, is_empty) {
+    EXPECT_TRUE(ucs_string_is_empty(""));
+    EXPECT_FALSE(ucs_string_is_empty("aaa"));
+}
 
 UCS_TEST_F(test_string, count_char) {
     static const char *str1 = "/foo";
@@ -55,6 +60,19 @@ UCS_TEST_F(test_string, common_prefix_len) {
 
     common_length = ucs_string_common_prefix_len(str1, str3);
     EXPECT_EQ(0, common_length);
+}
+
+UCS_TEST_F(test_string, path) {
+    char path[PATH_MAX];
+    ucs_path_get_common_parent("/sys/dev/one", "/sys/dev/two", path);
+    EXPECT_STREQ("/sys/dev", path);
+
+    EXPECT_EQ(4, ucs_path_calc_distance("/root/foo/bar", "/root/charlie/fox"));
+    EXPECT_EQ(2, ucs_path_calc_distance("/a/b/c/d", "/a/b/c/e"));
+    EXPECT_EQ(0, ucs_path_calc_distance("/a/b/c", "/a/b/c"));
+    EXPECT_EQ(1, ucs_path_calc_distance("/a/b/c", "/a/b"));
+    EXPECT_EQ(2, ucs_path_calc_distance("/a/b/cd", "/a/b/ce"));
+    EXPECT_EQ(3, ucs_path_calc_distance("/a/b/c", "/a/b_c"));
 }
 
 UCS_TEST_F(test_string, trim) {
@@ -105,12 +123,44 @@ UCS_TEST_F(test_string, range_str) {
               ucs_memunits_range_str(10, 10, buf, sizeof(buf)));
 }
 
+UCS_TEST_F(test_string, split) {
+    // No remainder
+    {
+        char str1[] = "foo,bar";
+        char *p1, *p2;
+        char *ret = ucs_string_split(str1, ",", 2, &p1, &p2);
+        EXPECT_EQ(std::string("foo"), p1);
+        EXPECT_EQ(std::string("bar"), p2);
+        EXPECT_EQ(NULL, ret);
+    }
+    // Have a remainder
+    {
+        char str1[] = "foo,bar,baz,a,b,c";
+        char *p1, *p2;
+        char *ret = ucs_string_split(str1, ",", 2, &p1, &p2);
+        EXPECT_EQ(std::string("foo"), p1);
+        EXPECT_EQ(std::string("bar"), p2);
+        EXPECT_EQ(std::string("baz,a,b,c"), ret);
+    }
+    // Less tokens than requested, and some are empty
+    {
+        char str1[] = "foo,:bar";
+        char *p1, *p2, *p3, *p4;
+        char *ret = ucs_string_split(str1, ",:", 4, &p1, &p2, &p3, &p4);
+        EXPECT_EQ(std::string("foo"), p1);
+        EXPECT_EQ(std::string(""), p2);
+        EXPECT_EQ(std::string("bar"), p3);
+        EXPECT_EQ(NULL, p4);
+        EXPECT_EQ(NULL, ret);
+    }
+}
+
 class test_string_buffer : public ucs::test {
 protected:
     void test_fixed(ucs_string_buffer_t *strb, size_t capacity);
     void check_extract_mem(ucs_string_buffer_t *strb);
+    static char make_lowercase_remove_underscores(char ch);
 };
-
 
 UCS_TEST_F(test_string_buffer, appendf) {
     ucs_string_buffer_t strb;
@@ -123,6 +173,12 @@ UCS_TEST_F(test_string_buffer, appendf) {
 
     EXPECT_EQ("We, Created, The-Monster",
               std::string(ucs_string_buffer_cstr(&strb)));
+
+    ucs_string_buffer_reset(&strb);
+    EXPECT_EQ("", std::string(ucs_string_buffer_cstr(&strb)));
+
+    ucs_string_buffer_appendf(&strb, "%s", "Clean slate");
+    EXPECT_EQ("Clean slate", std::string(ucs_string_buffer_cstr(&strb)));
 
     ucs_string_buffer_cleanup(&strb);
 }
@@ -148,6 +204,11 @@ UCS_TEST_F(test_string_buffer, append_long) {
 UCS_TEST_F(test_string_buffer, rtrim) {
     static const char *test_string = "wabbalubbadabdab";
     ucs_string_buffer_t strb;
+
+    ucs_string_buffer_init(&strb);
+    ucs_string_buffer_rtrim(&strb, "x");
+    EXPECT_EQ(std::string(""), ucs_string_buffer_cstr(&strb));
+    ucs_string_buffer_cleanup(&strb);
 
     ucs_string_buffer_init(&strb);
     ucs_string_buffer_appendf(&strb, "%s%s", test_string, ",,");
@@ -183,6 +244,7 @@ UCS_TEST_F(test_string_buffer, fixed_init) {
     char buf[17];
 
     ucs_string_buffer_init_fixed(&strb, buf, sizeof(buf));
+    EXPECT_EQ(std::string(""), ucs_string_buffer_cstr(&strb));
     test_fixed(&strb, sizeof(buf));
 }
 
@@ -201,6 +263,16 @@ UCS_TEST_F(test_string_buffer, append_hex) {
     EXPECT_EQ(std::string("deadbeef:badc0fee"), ucs_string_buffer_cstr(&strb));
 }
 
+UCS_TEST_F(test_string_buffer, append_iovec) {
+    static const struct iovec iov[3] = {{NULL, 0},
+                                        {(void*)0x1234, 100},
+                                        {(void*)0x4567, 200}};
+    UCS_STRING_BUFFER_ONSTACK(strb, 128);
+    ucs_string_buffer_append_iovec(&strb, iov, ucs_static_array_size(iov));
+    EXPECT_EQ(std::string("(nil),0|0x1234,100|0x4567,200"),
+              ucs_string_buffer_cstr(&strb));
+}
+
 UCS_TEST_F(test_string_buffer, flags) {
     static const char *flag_names[] = {"zero", "one", "two", "three", "four"};
     UCS_STRING_BUFFER_ONSTACK(strb, 128);
@@ -215,6 +287,35 @@ UCS_TEST_F(test_string_buffer, dump) {
     ucs_string_buffer_appendf(&strb, "for\n");
     ucs_string_buffer_appendf(&strb, "apples\n");
     ucs_string_buffer_dump(&strb, "[ TEST     ] ", stdout);
+}
+
+UCS_TEST_F(test_string_buffer, tokenize) {
+    UCS_STRING_BUFFER_ONSTACK(strb, 128);
+    ucs_string_buffer_appendf(&strb, "nova&noob|crocubot+ants&&rails");
+
+    std::vector<std::string> names;
+    char *name;
+    ucs_string_buffer_for_each_token(name, &strb, "&|+") {
+        names.push_back(name);
+    }
+
+    EXPECT_EQ(std::vector<std::string>(
+                      {"nova", "noob", "crocubot", "ants", "", "rails"}),
+              names);
+}
+
+UCS_TEST_F(test_string_buffer, appendc) {
+    UCS_STRING_BUFFER_ONSTACK(strb, 8);
+
+    ucs_string_buffer_appendc(&strb, '0', 0);
+    ucs_string_buffer_appendc(&strb, '1', 1);
+    ucs_string_buffer_appendc(&strb, '2', 2);
+    ucs_string_buffer_appendc(&strb, '3', 3);
+    ucs_string_buffer_appendc(&strb, '4', 4);
+    ucs_string_buffer_appendc(&strb, '5', 5);
+
+    // The string buffer should not exceed its limit (8)
+    EXPECT_EQ(std::string("1223334"), ucs_string_buffer_cstr(&strb));
 }
 
 void test_string_buffer::check_extract_mem(ucs_string_buffer_t *strb)
@@ -235,6 +336,29 @@ UCS_TEST_F(test_string_buffer, extract_mem) {
 
     ucs_string_buffer_init(&strb);
     check_extract_mem(&strb);
+}
+
+char test_string_buffer::make_lowercase_remove_underscores(char ch)
+{
+    if (isupper(ch)) {
+        return tolower(ch);
+    } else if (ch == '_') {
+        return '\0';
+    } else {
+        return ch;
+    }
+}
+
+UCS_TEST_F(test_string_buffer, ucs_string_buffer_translate) {
+    ucs_string_buffer_t strb = UCS_STRING_BUFFER_INITIALIZER;
+
+    ucs_string_buffer_appendf(&strb, "Camel_Case_With_Underscores1234");
+
+    ucs_string_buffer_translate(&strb, make_lowercase_remove_underscores);
+    EXPECT_EQ(std::string("camelcasewithunderscores1234"),
+              ucs_string_buffer_cstr(&strb));
+
+    ucs_string_buffer_cleanup(&strb);
 }
 
 class test_string_set : public ucs::test {

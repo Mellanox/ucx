@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2020.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -23,6 +23,7 @@ typedef enum {
     UCP_LANE_TYPE_AMO,                      /* Atomic memory access */
     UCP_LANE_TYPE_TAG,                      /* Tag matching offload */
     UCP_LANE_TYPE_CM,                       /* CM wireup */
+    UCP_LANE_TYPE_KEEPALIVE,                /* Checks connectivity */
     UCP_LANE_TYPE_LAST
 } ucp_lane_type_t;
 

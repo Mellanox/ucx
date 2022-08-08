@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2018.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2018. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -302,8 +302,12 @@ private:
     typedef std::pair<void*, void*> range;
 
     bool is_ptr_in_range(void *ptr, size_t size, const std::vector<range> &ranges) {
-        for (std::vector<range>::const_iterator iter = ranges.begin(); iter != ranges.end(); ++iter) {
-            if ((ptr >= iter->first) && ((char*)ptr < iter->second)) {
+        uintptr_t p = (uintptr_t)ptr;
+        for (std::vector<range>::const_iterator iter = ranges.begin();
+             iter != ranges.end(); ++iter) {
+            uintptr_t begin = (uintptr_t)iter->first;
+            uintptr_t end   = (uintptr_t)iter->second;
+            if ((p >= begin) && (p < end)) {
                 return true;
             }
         }
@@ -1224,7 +1228,8 @@ protected:
 
             if ((event_type == UCM_EVENT_MEM_TYPE_ALLOC) &&
                 (m_events[i].second.mem_type.address == address) &&
-                (m_events[i].second.mem_type.mem_type == mem_type()) &&
+                ((m_events[i].second.mem_type.mem_type == mem_type()) ||
+                 (m_events[i].second.mem_type.mem_type == UCS_MEMORY_TYPE_UNKNOWN)) &&
                 (m_events[i].second.mem_type.size == size)) {
                 return true;
             }
@@ -1276,7 +1281,7 @@ UCS_TEST_SKIP_COND_P(memtype_hooks, alloc_free,
     EXPECT_TRUE(is_event_fired(UCM_EVENT_MEM_TYPE_FREE, ptr, size));
 }
 
-INSTANTIATE_TEST_CASE_P(mem_types, memtype_hooks,
+INSTANTIATE_TEST_SUITE_P(mem_types, memtype_hooks,
                         ::testing::ValuesIn(mem_buffer::supported_mem_types()));
 
 class malloc_hook_dlopen : public malloc_hook {
@@ -1320,7 +1325,7 @@ protected:
             }
         }
 
-        operator bool()
+        operator bool() const
         {
             return m_lib != NULL;
         }

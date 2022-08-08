@@ -1,5 +1,6 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
+# Copyright (C) NextSilicon Ltd. 2021.  ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -13,7 +14,10 @@
 #include <stdint.h>
 #endif
 
+#ifndef __STDC_FORMAT_MACROS
 #define __STDC_FORMAT_MACROS 1
+#endif
+
 #include <inttypes.h>
 
 #include "test_helpers.h"
@@ -46,14 +50,14 @@ public:
     void set_num_threads(unsigned num_threads);
     unsigned num_threads() const;
 
-    void get_config(const std::string& name, std::string& value,
-                            size_t max);
-    virtual void set_config(const std::string& config_str);
+    virtual void set_config(const std::string& config_str = "");
     virtual void modify_config(const std::string& name, const std::string& value,
                                modify_config_mode_t mode = FAIL_IF_NOT_EXIST);
     virtual void push_config();
     virtual void pop_config();
 
+    void stats_activate();
+    void stats_restore();
 protected:
     class scoped_log_handler {
     public:
@@ -83,6 +87,14 @@ protected:
     virtual void check_skip_test() = 0;
 
     virtual void test_body() = 0;
+
+    static ucs_log_func_rc_t
+    common_logger(ucs_log_level_t log_level_to_handle, bool print,
+                  std::vector<std::string> &messages_vec, size_t limit,
+                  const char *file, unsigned line, const char *function,
+                  ucs_log_level_t level,
+                  const ucs_log_component_config_t *comp_conf,
+                  const char *message, va_list ap);
 
     static ucs_log_func_rc_t
     count_warns_logger(const char *file, unsigned line, const char *function,
@@ -141,14 +153,6 @@ private:
     static void push_debug_message_with_limit(std::vector<std::string>& vec,
                                               const std::string& message,
                                               const size_t limit);
-
-    static ucs_log_func_rc_t
-    common_logger(ucs_log_level_t log_level_to_handle, bool print,
-                  std::vector<std::string> &messages_vec, size_t limit,
-                  const char *file, unsigned line, const char *function,
-                  ucs_log_level_t level,
-                  const ucs_log_component_config_t *comp_conf,
-                  const char *message, va_list ap);
 
     static void *thread_func(void *arg);
 
@@ -265,6 +269,7 @@ class GTEST_TEST_CLASS_NAME_(test_case_name, test_name) : public test_case_name 
         #test_case_name, \
         (num_threads == 1) ? #test_name : #test_name "/mt_" #num_threads, \
         "", "", \
+        ::testing::internal::CodeLocation(__FILE__, __LINE__), \
         (parent_id), \
 		test_case_name::SetUpTestCase, \
 		test_case_name::TearDownTestCase, \
@@ -326,7 +331,7 @@ void GTEST_TEST_CLASS_NAME_(test_case_name, test_name)::test_body()
     static int AddToRegistry() { \
         ::testing::UnitTest::GetInstance()->parameterized_test_registry(). \
             GetTestCasePatternHolder<test_case_name>( \
-                #test_case_name, __FILE__, __LINE__)->AddTestPattern( \
+                #test_case_name, ::testing::internal::CodeLocation(__FILE__, __LINE__))->AddTestPattern( \
                     #test_case_name, \
                     (num_threads == 1) ? #test_name : #test_name "/mt_" #num_threads, \
                     new ::testing::internal::TestMetaFactory< \

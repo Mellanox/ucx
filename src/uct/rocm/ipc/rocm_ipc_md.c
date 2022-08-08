@@ -1,6 +1,6 @@
 /*
  * Copyright (C) Advanced Micro Devices, Inc. 2019. ALL RIGHTS RESERVED.
- * Copyright (C) Mellanox Technologies Ltd. 2020.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -40,11 +40,13 @@ static ucs_status_t uct_rocm_ipc_md_query(uct_md_h md, uct_md_attr_t *md_attr)
     return UCS_OK;
 }
 
-static ucs_status_t uct_rocm_ipc_mkey_pack(uct_md_h md, uct_mem_h memh,
-                                           void *rkey_buffer)
+static ucs_status_t
+uct_rocm_ipc_mkey_pack(uct_md_h uct_md, uct_mem_h memh,
+                       const uct_md_mkey_pack_params_t *params,
+                       void *rkey_buffer)
 {
-    uct_rocm_ipc_key_t *packed   = (uct_rocm_ipc_key_t *) rkey_buffer;
-    uct_rocm_ipc_key_t *key = (uct_rocm_ipc_key_t *) memh;
+    uct_rocm_ipc_key_t *packed = rkey_buffer;
+    uct_rocm_ipc_key_t *key    = memh;
 
     *packed = *key;
 
@@ -79,8 +81,9 @@ static hsa_status_t uct_rocm_ipc_pack_key(void *address, size_t length,
     return HSA_STATUS_SUCCESS;
 }
 
-static ucs_status_t uct_rocm_ipc_mem_reg(uct_md_h md, void *address, size_t length,
-                                         unsigned flags, uct_mem_h *memh_p)
+static ucs_status_t
+uct_rocm_ipc_mem_reg(uct_md_h md, void *address, size_t length,
+                     const uct_md_mem_reg_params_t *params, uct_mem_h *memh_p)
 {
     uct_rocm_ipc_key_t *key;
     hsa_status_t status;
@@ -182,7 +185,8 @@ uct_component_t uct_rocm_ipc_component = {
     },
     .cm_config          = UCS_CONFIG_EMPTY_GLOBAL_LIST_ENTRY,
     .tl_list            = UCT_COMPONENT_TL_LIST_INITIALIZER(&uct_rocm_ipc_component),
-    .flags              = 0
+    .flags              = 0,
+    .md_vfs_init        = (uct_component_md_vfs_init_func_t)ucs_empty_function
 };
 UCT_COMPONENT_REGISTER(&uct_rocm_ipc_component);
 

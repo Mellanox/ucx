@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -23,6 +23,16 @@
                           UCS_STATUS_PTR(UCS_ERR_NO_RESOURCE)) \
     UCT_RC_CHECK_NUM_RDMA_READ_RET(&(_iface)->super, \
                                    UCS_STATUS_PTR(UCS_ERR_NO_RESOURCE))
+
+
+enum {
+    /* Tag Matching address. It additionally contains QP number which
+     * is used for hardware offloads. */
+    UCT_RC_MLX5_IFACE_ADDR_FLAG_TM         = UCS_BIT(0),
+
+    /* Address contains flush remote rkey */
+    UCT_RC_MLX5_IFACE_ADDR_FLAG_FLUSH_RKEY = UCS_BIT(1)
+};
 
 
 /**
@@ -63,9 +73,9 @@ UCS_CLASS_DECLARE(uct_rc_mlx5_ep_t, const uct_ep_params_t *);
 UCS_CLASS_DECLARE_NEW_FUNC(uct_rc_mlx5_ep_t, uct_ep_t, const uct_ep_params_t *);
 UCS_CLASS_DECLARE_DELETE_FUNC(uct_rc_mlx5_ep_t, uct_ep_t);
 
-void uct_rc_mlx5_iface_check_rx_completion(uct_rc_mlx5_iface_common_t *iface,
-                                           struct mlx5_cqe64 *cqe,
-                                           int poll_flags);
+struct mlx5_cqe64 *
+uct_rc_mlx5_iface_check_rx_completion(uct_rc_mlx5_iface_common_t *iface,
+                                      struct mlx5_cqe64 *cqe, int poll_flags);
 
 ucs_status_t uct_rc_mlx5_ep_put_short(uct_ep_h tl_ep, const void *buffer, unsigned length,
                                       uint64_t remote_addr, uct_rkey_t rkey);
@@ -130,7 +140,11 @@ ucs_status_t uct_rc_mlx5_ep_fence(uct_ep_h tl_ep, unsigned flags);
 
 void uct_rc_mlx5_ep_post_check(uct_ep_h tl_ep);
 
+void uct_rc_mlx5_ep_vfs_populate(uct_rc_ep_t *rc_ep);
+
 ucs_status_t uct_rc_mlx5_ep_flush(uct_ep_h tl_ep, unsigned flags, uct_completion_t *comp);
+
+ucs_status_t uct_rc_mlx5_ep_invalidate(uct_ep_h tl_ep, unsigned flags);
 
 ucs_status_t uct_rc_mlx5_ep_fc_ctrl(uct_ep_t *tl_ep, unsigned op,
                                     uct_rc_pending_req_t *req);

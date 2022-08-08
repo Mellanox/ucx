@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -23,17 +23,7 @@
 #endif
 
 #if IBV_HW_TM
-#  if HAVE_INFINIBAND_TM_TYPES_H
-#    include <infiniband/tm_types.h>
-#  else
-#    define ibv_tmh                         ibv_exp_tmh
-#    define ibv_rvh                         ibv_exp_tmh_rvh
-#    define IBV_TM_CAP_RC                   IBV_EXP_TM_CAP_RC
-#    define IBV_TMH_EAGER                   IBV_EXP_TMH_EAGER
-#    define IBV_TMH_RNDV                    IBV_EXP_TMH_RNDV
-#    define IBV_TMH_FIN                     IBV_EXP_TMH_FIN
-#    define IBV_TMH_NO_TAG                  IBV_EXP_TMH_NO_TAG
-#  endif
+#  include <infiniband/tm_types.h>
 #  define IBV_DEVICE_TM_CAPS(_dev, _field)  ((_dev)->dev_attr.tm_caps._field)
 #else
 #  define IBV_TM_CAP_RC                     0
@@ -47,10 +37,6 @@
 #endif
 
 #define IBV_DEVICE_MAX_UNEXP_COUNT          UCS_BIT(14)
-
-#if HAVE_DECL_IBV_EXP_CREATE_SRQ
-#  define ibv_srq_init_attr_ex              ibv_exp_create_srq_attr
-#endif
 
 #define UCT_RC_MLX5_OPCODE_FLAG_RAW         0x100
 #define UCT_RC_MLX5_OPCODE_FLAG_TM          0x200
@@ -226,7 +212,7 @@ typedef struct uct_rc_mlx5_cmd_wq {
     uct_ib_mlx5_txwq_t            super;
     uct_rc_mlx5_srq_op_t          *ops;     /* array of operations on command QP */
     int                           ops_head; /* points to the next operation to be completed */
-    int                           ops_tail; /* points to the last adde operation*/
+    int                           ops_tail; /* points to the last added operation*/
     int                           ops_mask; /* mask which bounds head and tail by
                                                ops array size */
 } uct_rc_mlx5_cmd_wq_t;
@@ -253,7 +239,7 @@ typedef struct uct_rc_mlx5_mp_context {
      * is being processed (not all fragments are delivered to the user via
      * uct_tag_unexp_eager_cb_t callback yet). Otherwise, any incoming tag
      * eager message should be either a single fragment message or the first
-     * fragment of multi-fragmeneted message. */
+     * fragment of multi-fragmented message. */
     uint8_t                       free;
 } uct_rc_mlx5_mp_context_t;
 
@@ -262,6 +248,17 @@ typedef struct uct_rc_mlx5_mp_hash_key {
     uint64_t                      guid;
     uint32_t                      qp_num;
 } uct_rc_mlx5_mp_hash_key_t;
+
+
+typedef struct uct_rc_mlx5_iface_addr {
+    uint8_t                       flags;
+} UCS_S_PACKED uct_rc_mlx5_iface_addr_t;
+
+
+typedef struct uct_rc_mlx5_iface_flush_addr {
+    uct_rc_mlx5_iface_addr_t      super;
+    uint16_t                      flush_rkey_hi;
+} UCS_S_PACKED uct_rc_mlx5_iface_flush_addr_t;
 
 
 static UCS_F_ALWAYS_INLINE int
@@ -444,7 +441,7 @@ typedef struct uct_rc_mlx5_iface_common_config {
         size_t                           mp_num_strides;
     } tm;
     unsigned                             exp_backoff;
-    uint8_t                              log_ack_req_freq;
+    unsigned                             log_ack_req_freq;
     UCS_CONFIG_STRING_ARRAY_FIELD(types) srq_topo;
 } uct_rc_mlx5_iface_common_config_t;
 
@@ -487,23 +484,6 @@ UCS_CLASS_DECLARE(uct_rc_mlx5_iface_common_t, uct_iface_ops_t*,
    } else { \
        _res_op = UCS_PP_TOKENPASTE(_op, _imm_suffix); \
        uct_rc_mlx5_tag_imm_data_pack(&(_ib_imm), &(_app_ctx), _imm_data); \
-   }
-
-#define UCT_RC_MLX5_GET_TX_TM_DESC(_iface, _mp, _desc, _tag, _app_ctx, _hdr) \
-   { \
-       UCT_RC_IFACE_GET_TX_DESC(_iface, _mp, _desc) \
-       _hdr = _desc + 1; \
-       uct_rc_mlx5_fill_tmh(_hdr, _tag, _app_ctx, IBV_EXP_TMH_EAGER); \
-       _hdr += sizeof(struct ibv_tmh); \
-   }
-
-#define UCT_RC_MLX5_GET_TM_BCOPY_DESC(_iface, _mp, _desc, _tag, _app_ctx, \
-                                      _pack_cb, _arg, _length) \
-   { \
-       void *hdr; \
-       UCT_RC_MLX5_GET_TX_TM_DESC(_iface, _mp, _desc, _tag, _app_ctx, hdr) \
-       (_desc)->super.handler = (uct_rc_send_handler_t)ucs_mpool_put; \
-       _length = _pack_cb(hdr, _arg); \
    }
 
 
@@ -692,7 +672,7 @@ uct_rc_mlx5_devx_init_rx(uct_rc_mlx5_iface_common_t *iface,
 static UCS_F_MAYBE_UNUSED void
 uct_rc_mlx5_devx_cleanup_srq(uct_ib_mlx5_md_t *md, uct_ib_mlx5_srq_t *srq)
 {
-    ucs_bug("DevX SRQ cleanup has to be done only if DevX support is enabled");
+    ucs_bug("DEVX SRQ cleanup has to be done only if DEVX support is enabled");
 }
 #endif
 
@@ -719,7 +699,7 @@ uct_rc_mlx5_am_hdr_fill(uct_rc_mlx5_hdr_t *rch, uint8_t id)
 
 #if HAVE_DECL_MLX5DV_CREATE_QP
 void uct_rc_mlx5_common_fill_dv_qp_attr(uct_rc_mlx5_iface_common_t *iface,
-                                        struct ibv_qp_init_attr_ex *qp_attr,
+                                        uct_ib_qp_init_attr_t *qp_attr,
                                         struct mlx5dv_qp_init_attr *dv_attr,
                                         unsigned scat2cqe_dir_mask);
 #endif

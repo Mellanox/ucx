@@ -1,6 +1,6 @@
 /**
 * Copyright (C) UT-Battelle, LLC. 2015. ALL RIGHTS RESERVED.
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
 
@@ -15,7 +15,7 @@
 typedef struct uct_cma_ep {
     uct_scopy_ep_t       super;
     pid_t                remote_pid;
-    uct_keepalive_info_t *keepalive;
+    uct_keepalive_info_t keepalive;
 } uct_cma_ep_t;
 
 

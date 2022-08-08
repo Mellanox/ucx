@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2021.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2021. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -7,7 +7,6 @@
 #include "uct_test.h"
 #include "uct/api/uct_def.h"
 
-#include <ucs/stats/stats.h>
 #include <ucs/sys/sock.h>
 #include <ucs/sys/string.h>
 #include <common/test_helpers.h>
@@ -15,7 +14,6 @@
 #ifdef HAVE_MALLOC_H
 #include <malloc.h>
 #endif
-#include <ifaddrs.h>
 
 
 std::string resource::name() const {
@@ -292,8 +290,7 @@ void uct_test::set_interface_rscs(uct_component_h cmpt, const char *cmpt_name,
 }
 
 bool uct_test::is_interface_usable(struct ifaddrs *ifa, const char *name) {
-    if (!(ucs_netif_flags_is_active(ifa->ifa_flags)) ||
-        !(ucs::is_inet_addr(ifa->ifa_addr))) {
+    if (!ucs::is_interface_usable(ifa)) {
         return false;
     }
 
@@ -633,23 +630,6 @@ bool uct_test::has_gpu() const {
             has_transport("rocm_copy"));
 }
 
-void uct_test::stats_activate()
-{
-    ucs_stats_cleanup();
-    push_config();
-    modify_config("STATS_DEST",    "file:/dev/null");
-    modify_config("STATS_TRIGGER", "exit");
-    ucs_stats_init();
-    ASSERT_TRUE(ucs_stats_is_active());
-}
-
-void uct_test::stats_restore()
-{
-    ucs_stats_cleanup();
-    pop_config();
-    ucs_stats_init();
-}
-
 uct_test::entity *
 uct_test::create_entity(size_t rx_headroom, uct_error_handler_t err_handler,
                         uct_tag_unexp_eager_cb_t eager_cb,
@@ -982,7 +962,7 @@ void uct_test::entity::mem_type_dereg(uct_allocated_memory_t *mem) const {
     if ((mem->memh != UCT_MEM_HANDLE_NULL) &&
         (md_attr().cap.reg_mem_types & UCS_BIT(mem->mem_type))) {
         ucs_status_t status = uct_md_mem_dereg(m_md, mem->memh);
-        ASSERT_UCS_OK(status);
+        ucs_assert_always(status == UCS_OK);
         mem->memh = UCT_MEM_HANDLE_NULL;
         mem->md   = NULL;
     }
@@ -1016,8 +996,9 @@ void uct_test::entity::rkey_unpack(const uct_allocated_memory_t *mem,
 void uct_test::entity::rkey_release(const uct_rkey_bundle *rkey_bundle) const
 {
     if (rkey_bundle->rkey != UCT_INVALID_RKEY) {
-        ucs_status_t status = uct_rkey_release(m_resource.component, rkey_bundle);
-        ASSERT_UCS_OK(status);
+        ucs_status_t status = uct_rkey_release(m_resource.component,
+                                               rkey_bundle);
+        ucs_assert_always(status == UCS_OK);
     }
 }
 
@@ -1098,6 +1079,12 @@ const uct_cm_attr_t& uct_test::entity::cm_attr() const {
 
 uct_listener_h uct_test::entity::listener() const {
     return m_listener;
+}
+
+uct_listener_h uct_test::entity::revoke_listener() const {
+    uct_listener_h uct_listener = listener();
+    m_listener.revoke();
+    return uct_listener;
 }
 
 uct_iface_h uct_test::entity::iface() const {
@@ -1202,12 +1189,14 @@ void uct_test::entity::destroy_eps() {
 void
 uct_test::entity::connect_to_sockaddr(unsigned index,
                                       const ucs::sock_addr_storage &remote_addr,
+                                      const ucs::sock_addr_storage *local_addr,
                                       uct_cm_ep_resolve_callback_t resolve_cb,
                                       uct_cm_ep_client_connect_callback_t connect_cb,
                                       uct_ep_disconnect_cb_t disconnect_cb,
                                       void *user_data)
 {
     ucs_sock_addr_t ucs_remote_addr = remote_addr.to_ucs_sock_addr();
+    ucs_sock_addr_t ucs_local_addr;
     uct_ep_params_t params;
     uct_ep_h ep;
     ucs_status_t status;
@@ -1223,6 +1212,12 @@ uct_test::entity::connect_to_sockaddr(unsigned index,
                         UCT_EP_PARAM_FIELD_CM_RESOLVE_CB              |
                         UCT_EP_PARAM_FIELD_SOCKADDR_CONNECT_CB_CLIENT |
                         UCT_EP_PARAM_FIELD_SOCKADDR_DISCONNECT_CB;
+
+    if (local_addr != NULL) {
+        ucs_local_addr          = local_addr->to_ucs_sock_addr();
+        params.field_mask      |= UCT_EP_PARAM_FIELD_LOCAL_SOCKADDR;
+        params.local_sockaddr   = &ucs_local_addr;
+    }
 
     params.user_data            = user_data;
     params.cm                   = m_cm;
@@ -1243,6 +1238,7 @@ void uct_test::entity::connect_to_ep(unsigned index, entity& other,
     ucs_status_t status;
     uct_ep_h ep, remote_ep;
     uct_ep_params_t ep_params;
+    uct_iface_addr_t *iface_addr;
 
     reserve_ep(index);
     if (m_eps[index]) {
@@ -1250,8 +1246,15 @@ void uct_test::entity::connect_to_ep(unsigned index, entity& other,
     }
 
     other.reserve_ep(other_index);
-    ep_params.field_mask = UCT_EP_PARAM_FIELD_IFACE;
+
+    iface_addr = (uct_iface_addr_t*)ucs_alloca(other.iface_attr().iface_addr_len);
+
+    ep_params.field_mask = UCT_EP_PARAM_FIELD_IFACE |
+                           UCT_EP_PARAM_FIELD_IFACE_ADDR;
     ep_params.iface      = other.m_iface;
+    ep_params.iface_addr = iface_addr;
+    status               = uct_iface_get_address(iface(), iface_addr);
+    ASSERT_UCS_OK(status);
     status               = uct_ep_create(&ep_params, &remote_ep);
     ASSERT_UCS_OK(status);
     other.m_eps[other_index].reset(remote_ep, uct_ep_destroy);
@@ -1260,6 +1263,8 @@ void uct_test::entity::connect_to_ep(unsigned index, entity& other,
         connect_p2p_ep(remote_ep, remote_ep);
     } else {
         ep_params.iface     = m_iface;
+        status              = uct_iface_get_address(other.iface(), iface_addr);
+        ASSERT_UCS_OK(status);
         ucs_status_t status = uct_ep_create(&ep_params, &ep);
         ASSERT_UCS_OK(status);
 
@@ -1408,6 +1413,11 @@ void uct_test::mapped_buffer::pattern_check(uint64_t seed) {
     mem_buffer::pattern_check(ptr(), length(), seed, m_mem.mem_type);
 }
 
+void uct_test::mapped_buffer::memset(int c)
+{
+    mem_buffer::memset(ptr(), length(), c, m_mem.mem_type);
+}
+
 void *uct_test::mapped_buffer::ptr() const {
     return m_buf;
 }
@@ -1488,32 +1498,37 @@ void uct_test::async_event_ctx::signal() {
 }
 
 bool uct_test::async_event_ctx::wait_for_event(entity &e, double timeout_sec) {
-    if (wakeup_fd.fd == -1) {
+    /* Caching fd locally to workaround bug in gcc (GCC) 11.2.1 20210728 FC35
+     * See details in https://github.com/openucx/ucx/issues/7705 */
+    struct pollfd local_fd = wakeup_fd;
+
+    if (local_fd.fd == -1) {
         /* create wakeup */
         if (e.iface_attr().cap.event_flags & UCT_IFACE_FLAG_EVENT_FD) {
-            ucs_status_t status =
-                uct_iface_event_fd_get(e.iface(), &wakeup_fd.fd);
+            ucs_status_t status = uct_iface_event_fd_get(e.iface(),
+                                                         &local_fd.fd);
             ASSERT_UCS_OK(status);
         } else {
-            ucs_status_t status =
-                ucs_async_pipe_create(&aux_pipe);
+            ucs_status_t status = ucs_async_pipe_create(&aux_pipe);
             ASSERT_UCS_OK(status);
             aux_pipe_init = true;
-            wakeup_fd.fd = ucs_async_pipe_rfd(&aux_pipe);
+            local_fd.fd   = ucs_async_pipe_rfd(&aux_pipe);
         }
     }
 
     int timeout_ms = static_cast<int>((timeout_sec * UCS_MSEC_PER_SEC) *
                                       ucs::test_time_multiplier());
-    int ret        = poll(&wakeup_fd, 1, timeout_ms);
+    int ret        = poll(&local_fd, 1, timeout_ms);
     EXPECT_TRUE((ret == 0) || (ret == 1));
     if (ret > 0) {
         if (e.iface_attr().cap.event_flags & UCT_IFACE_FLAG_EVENT_ASYNC_CB) {
             ucs_async_pipe_drain(&aux_pipe);
         }
+        wakeup_fd = local_fd;
         return true;
     }
 
+    wakeup_fd = local_fd;
     return false;
 }
 

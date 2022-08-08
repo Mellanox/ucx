@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 * Copyright (C) UT-Battelle, LLC. 2015. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
@@ -26,8 +26,8 @@ public:
         VARIANT_ERR_HANDLING,
         VARIANT_RNDV_PUT_ZCOPY,
         VARIANT_RNDV_GET_ZCOPY,
-        VARIANT_RNDV_AUTO,
         VARIANT_SEND_NBR,
+        VARIANT_PROTO
     };
 
     test_ucp_tag_xfer() {
@@ -49,8 +49,8 @@ public:
             modify_config("RNDV_SCHEME", "put_zcopy");
         } else if (get_variant_value() == VARIANT_RNDV_GET_ZCOPY) {
             modify_config("RNDV_SCHEME", "get_zcopy");
-        } else if (get_variant_value() == VARIANT_RNDV_AUTO) {
-            modify_config("RNDV_SCHEME", "auto");
+        } else if (get_variant_value() == VARIANT_PROTO) {
+            modify_config("PROTO_ENABLE", "y");
         }
         modify_config("MAX_EAGER_LANES", "2");
         modify_config("MAX_RNDV_LANES", "2");
@@ -58,13 +58,10 @@ public:
         test_ucp_tag::init();
     }
 
-    bool skip_on_ib_dc() {
-#if HAVE_DC_DV
-        // skip due to DCI stuck bug
-        return has_transport("dc_x");
-#else
-        return false;
-#endif
+    virtual void cleanup()
+    {
+        EXPECT_EQ(ucp::dt_gen_start_count, ucp::dt_gen_finish_count);
+        test_ucp_tag::cleanup();
     }
 
     static void get_test_variants(std::vector<ucp_test_variant>& variants)
@@ -77,9 +74,9 @@ public:
         add_variant_with_value(variants, get_ctx_params(),
                                VARIANT_RNDV_GET_ZCOPY, "rndv_get_zcopy");
         add_variant_with_value(variants, get_ctx_params(),
-                               VARIANT_RNDV_AUTO, "rndv_auto");
-        add_variant_with_value(variants, get_ctx_params(),
                                VARIANT_SEND_NBR, "send_nbr");
+        add_variant_with_value(variants, get_ctx_params(), VARIANT_PROTO,
+                               "proto");
     }
 
     virtual ucp_ep_params_t get_ep_params() {
@@ -438,8 +435,10 @@ void test_ucp_tag_xfer::test_xfer_generic_err(size_t size, bool expected,
         request_free(sreq);
     }
 
-    /* the generic unpack function is expected to fail */
-    EXPECT_EQ(UCS_ERR_NO_MEMORY, rreq->status);
+    if (count > 0) {
+        /* the generic unpack function is expected to fail */
+        EXPECT_EQ(UCS_ERR_NO_MEMORY, rreq->status);
+    }
     request_free(rreq);
     EXPECT_EQ(2, ucp::dt_gen_start_count);
     EXPECT_EQ(2, ucp::dt_gen_finish_count);
@@ -598,23 +597,22 @@ UCS_TEST_P(test_ucp_tag_xfer, iov_unexp) {
     test_xfer(&test_ucp_tag_xfer::test_xfer_iov, false, false, false);
 }
 
-UCS_TEST_P(test_ucp_tag_xfer, generic_err_exp) {
+UCS_TEST_P(test_ucp_tag_xfer, generic_err_exp, "PROTO_INDIRECT_ID=y") {
     test_xfer(&test_ucp_tag_xfer::test_xfer_generic_err, true, false, false);
 }
 
-UCS_TEST_SKIP_COND_P(test_ucp_tag_xfer, generic_err_unexp,
-                     skip_on_ib_dc()) {
+UCS_TEST_P(test_ucp_tag_xfer, generic_err_unexp, "PROTO_INDIRECT_ID=y") {
     test_xfer(&test_ucp_tag_xfer::test_xfer_generic_err, false, false, false);
 }
 
-UCS_TEST_P(test_ucp_tag_xfer, generic_err_exp_sync) {
+UCS_TEST_P(test_ucp_tag_xfer, generic_err_exp_sync, "PROTO_INDIRECT_ID=y") {
     /* because ucp_tag_send_req return status (instead request) if send operation
      * completed immediately */
     skip_loopback();
     test_xfer(&test_ucp_tag_xfer::test_xfer_generic_err, true, true, false);
 }
 
-UCS_TEST_P(test_ucp_tag_xfer, generic_err_unexp_sync) {
+UCS_TEST_P(test_ucp_tag_xfer, generic_err_unexp_sync, "PROTO_INDIRECT_ID=y") {
     test_xfer(&test_ucp_tag_xfer::test_xfer_generic_err, false, true, false);
 }
 

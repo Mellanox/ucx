@@ -1,5 +1,5 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2001-2021.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2021. ALL RIGHTS RESERVED.
 # See file LICENSE for terms.
 #
 
@@ -26,6 +26,9 @@ libuct_rdmacm_la_SOURCES = \
 	rdmacm_listener.c \
 	rdmacm_cm_ep.c
 
+PKG_CONFIG_NAME=rdmacm
+
 include $(top_srcdir)/config/module.am
+include $(top_srcdir)/config/module-pkg-config.am
 
 endif # HAVE_RDMACM

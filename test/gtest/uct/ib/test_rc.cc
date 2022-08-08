@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 * Copyright (C) UT-Battelle, LLC. 2016. ALL RIGHTS RESERVED.
 * Copyright (C) ARM Ltd. 2016.All rights reserved.
 * See file LICENSE for terms.
@@ -51,7 +51,7 @@ void test_rc::test_iface_ops(int cq_len)
     UCS_TEST_GET_BUFFER_IOV(iov, iovcnt, sendbuf.ptr(), sendbuf.length(),
                             sendbuf.memh(), m_e1->iface_attr().cap.put.max_iov);
     // For _x transports several CQEs can be consumed per WQE, post less put zcopy
-    // ops, so that flush would be sucessfull (otherwise flush will return
+    // ops, so that flush would be successful (otherwise flush will return
     // NO_RESOURCES and completion will not be added for it).
     for (int i = 0; i < cq_len / 5; i++) {
         ASSERT_UCS_OK_OR_INPROGRESS(uct_ep_put_zcopy(e->ep(0), iov, iovcnt,
@@ -160,7 +160,11 @@ public:
         modify_config("RC_MAX_GET_ZCOPY",
                       ucs::to_string(m_max_get_zcopy).c_str());
 
-        modify_config("RC_TX_QUEUE_LEN", "32");
+        if (!RUNNING_ON_VALGRIND) {
+            /* Valgrind already has special small value for this */
+            modify_config("RC_TX_QUEUE_LEN", "32");
+        }
+
         modify_config("RC_TM_ENABLE", "y", SETENV_IF_NOT_EXIST);
 
         m_comp.func   = NULL;
@@ -169,18 +173,16 @@ public:
     }
 
     void init() {
-#ifdef ENABLE_STATS
         stats_activate();
-#endif
         test_rc::init();
     }
 
-#ifdef ENABLE_STATS
     void cleanup() {
         uct_test::cleanup();
         stats_restore();
     }
 
+#ifdef ENABLE_STATS
     uint64_t get_no_reads_stat_counter(entity *e) {
         uct_rc_iface_t *iface = ucs_derived_of(e->iface(), uct_rc_iface_t);
 
@@ -552,6 +554,55 @@ UCS_TEST_SKIP_COND_P(test_rc_get_limit, ordering_comp_cb,
 
 UCT_INSTANTIATE_RC_DC_TEST_CASE(test_rc_get_limit)
 
+class test_rc_ece_auto : public test_rc {
+public:
+    void init()
+    {
+        m_recv_count = 0;
+        modify_config("RC_ECE", "auto");
+        test_rc::init();
+    }
+
+    static size_t send_pack_cb(void *dest, void *arg)
+    {
+        size_t length = *(size_t*)arg;
+        memset(dest, 0, length);
+        return length;
+    }
+
+    static ucs_status_t
+    recv_handler(void *arg, void *data, size_t length, unsigned flags)
+    {
+        EXPECT_EQ(*(size_t*)arg, length);
+        ++m_recv_count;
+        return UCS_OK;
+    }
+
+    void send_recv(uct_ep_h ep, entity *ent, size_t length)
+    {
+        /* set a callback for the uct to invoke for receiving the data */
+        uct_iface_set_am_handler(ent->iface(), 0, recv_handler, &length, 0);
+
+        /* send the data */
+        ssize_t packed_size = uct_ep_am_bcopy(ep, 0, send_pack_cb, &length, 0);
+        ASSERT_EQ(length, packed_size);
+
+        wait_for_value(&m_recv_count, (size_t)1, true);
+    }
+
+protected:
+    static size_t m_recv_count;
+};
+
+size_t test_rc_ece_auto::m_recv_count = 0;
+
+UCS_TEST_P(test_rc_ece_auto, send_recv)
+{
+    send_recv(m_e1->ep(0), m_e2, m_e1->iface_attr().cap.am.max_bcopy);
+}
+
+UCT_INSTANTIATE_RC_DC_TEST_CASE(test_rc_ece_auto)
+
 uint32_t test_rc_flow_control::m_am_rx_count = 0;
 
 void test_rc_flow_control::init()
@@ -615,7 +666,7 @@ void test_rc_flow_control::test_general(int wnd, int soft_thresh,
     flush();
 }
 
-void test_rc_flow_control::test_pending_grant(int wnd)
+void test_rc_flow_control::test_pending_grant(int wnd, uint64_t *wait_fc_seq)
 {
     /* Block send capabilities of m_e2 for fc grant to be
      * added to the pending queue. */
@@ -628,6 +679,12 @@ void test_rc_flow_control::test_pending_grant(int wnd)
      * should be in pending queue of m_e2. */
     send_am_messages(m_e1, 1, UCS_ERR_NO_RESOURCE);
     EXPECT_LE(get_fc_ptr(m_e1)->fc_wnd, 0);
+
+    if (wait_fc_seq != NULL) {
+        uint64_t fc_seq_value = *wait_fc_seq;
+        wait_for_value(wait_fc_seq, fc_seq_value + 1, true);
+        EXPECT_GT(*wait_fc_seq, fc_seq_value);
+    }
 
     /* Enable send capabilities of m_e2 and send short put message to force
      * pending queue dispatch. Can't send AM message for that, because it may
@@ -789,7 +846,7 @@ UCT_INSTANTIATE_RC_TEST_CASE(test_rc_flow_control_stats)
 
 #endif
 
-#ifdef HAVE_MLX5_HW
+#ifdef HAVE_MLX5_DV
 extern "C" {
 #include <uct/ib/rc/accel/rc_mlx5_common.h>
 }
@@ -802,7 +859,7 @@ test_uct_iface_attrs::attr_map_t test_rc_iface_attrs::get_num_iov() {
         EXPECT_TRUE(has_transport("rc_verbs"));
         m_e->connect(0, *m_e, 0);
         uct_rc_verbs_ep_t *ep = ucs_derived_of(m_e->ep(0), uct_rc_verbs_ep_t);
-        uint32_t max_sge;
+        uint32_t max_sge = 0; // for gcc 10 -Og
         ASSERT_UCS_OK(uct_ib_qp_max_send_sge(ep->qp, &max_sge));
 
         attr_map_t iov_map;
@@ -817,8 +874,8 @@ test_rc_iface_attrs::get_num_iov_mlx5_common(size_t av_size)
 {
     attr_map_t iov_map;
 
-#ifdef HAVE_MLX5_HW
-    // For RMA iovs can use all WQE space, remainig from control and
+#ifdef HAVE_MLX5_DV
+    // For RMA iovs can use all WQE space, remaining from control and
     // remote address segments (and AV if relevant)
     size_t rma_iov = (UCT_IB_MLX5_MAX_SEND_WQE_SIZE -
                       (sizeof(struct mlx5_wqe_raddr_seg) +
@@ -834,7 +891,7 @@ test_rc_iface_attrs::get_num_iov_mlx5_common(size_t av_size)
 #if IBV_HW_TM
     if (UCT_RC_MLX5_TM_ENABLED(ucs_derived_of(m_e->iface(),
                                               uct_rc_mlx5_iface_common_t))) {
-        // For TAG eager zcopy iovs can use all WQE space, remainig from control
+        // For TAG eager zcopy iovs can use all WQE space, remaining from control
         // segment, TMH header (+ inline data segment) and AV (if relevant)
         iov_map["tag"] = (UCT_IB_MLX5_MAX_SEND_WQE_SIZE -
                           (sizeof(struct mlx5_wqe_ctrl_seg) +
@@ -843,7 +900,7 @@ test_rc_iface_attrs::get_num_iov_mlx5_common(size_t av_size)
                          sizeof(struct mlx5_wqe_data_seg);
     }
 #endif // IBV_HW_TM
-#endif // HAVE_MLX5_HW
+#endif // HAVE_MLX5_DV
 
     return iov_map;
 }
@@ -904,7 +961,7 @@ UCS_TEST_SKIP_COND_P(test_rc_keepalive, pending,
     status = uct_ep_check(ep0(), 0, NULL);
     ASSERT_UCS_OK(status);
 
-    kill_receiver();
+    inject_error();
 
     enable_entity(m_sender);
 
@@ -920,7 +977,7 @@ UCS_TEST_SKIP_COND_P(test_rc_keepalive, pending,
 UCT_INSTANTIATE_RC_TEST_CASE(test_rc_keepalive)
 
 
-#ifdef HAVE_MLX5_HW
+#ifdef HAVE_MLX5_DV
 
 class test_rc_srq : public test_rc {
 public:

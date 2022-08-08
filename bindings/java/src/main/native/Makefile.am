@@ -1,5 +1,5 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2019.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
 # See file LICENSE for terms.
 #
 
@@ -17,7 +17,8 @@ MVNCMD = $(MVN) -B -T 1C -f \
          -Dmaven.repo.local=$(maven_repo) \
          -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn
 
-JUCX_GENERATED_H_FILES = org_openucx_jucx_ucp_UcpConstants.h             \
+JUCX_GENERATED_H_FILES = org_openucx_jucx_ucp_UcpConnectionRequest.h     \
+                         org_openucx_jucx_ucp_UcpConstants.h             \
                          org_openucx_jucx_ucp_UcpContext.h               \
                          org_openucx_jucx_ucp_UcpEndpoint.h              \
                          org_openucx_jucx_ucp_UcpListener.h              \

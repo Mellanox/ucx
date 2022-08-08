@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 * Copyright (C) UT-Battelle, LLC. 2015. ALL RIGHTS RESERVED.
 * Copyright (C) ARM Ltd. 2020.  ALL RIGHTS RESERVED.
 *
@@ -46,8 +46,7 @@ public:
                 add_variant_value(variant->values, i, test->title);
                 add_variant_value(variant->values, ATOMIC_DEVICE, "device");
             } else {
-                variant = &add_variant(variants, 0);
-                add_variant_value(variant->values, i, test->title);
+                add_variant_with_value(variants, 0, i, test->title);
             }
         }
     }
@@ -352,13 +351,41 @@ UCS_TEST_SKIP_COND_P(test_ucp_perf, envelope, has_transport("self"))
     }
     test.iters = ucs_min(test.iters, max_iter);
 
+    test.send_mem_type = UCS_MEMORY_TYPE_HOST;
+    test.recv_mem_type = UCS_MEMORY_TYPE_HOST;
+
     run_test(test, 0, check_perf, "", "");
 }
 
 UCP_INSTANTIATE_TEST_CASE(test_ucp_perf)
 
+class test_ucp_loopback : public test_ucp_perf {};
 
-class test_ucp_wait_mem : public test_ucp_perf {};
+UCS_TEST_P(test_ucp_loopback, envelope)
+{
+    test_spec test = tests[get_variant_value(VARIANT_TEST_TYPE)];
+
+    test.send_mem_type = UCS_MEMORY_TYPE_HOST;
+    test.recv_mem_type = UCS_MEMORY_TYPE_HOST;
+
+    run_test(test, UCX_PERF_TEST_FLAG_LOOPBACK, true, "", "");
+}
+
+UCP_INSTANTIATE_TEST_CASE(test_ucp_loopback)
+
+
+class test_ucp_wait_mem : public test_ucp_perf {
+public:
+    static void get_test_variants(std::vector<ucp_test_variant> &variants)
+    {
+        // Add test instance only if wait_mem is non-trivial for this arch
+#ifdef __aarch64__
+        add_variant(variants, 0);
+#else
+        ucs_assert(ucs_arch_wait_mem == ucs_arch_generic_wait_mem);
+#endif
+    }
+};
 
 UCS_TEST_P(test_ucp_wait_mem, envelope) {
     double perf_avg    = 0;
@@ -376,7 +403,9 @@ UCS_TEST_P(test_ucp_wait_mem, envelope) {
                               0, 1, { 8 }, 1, 1000lu,
                               ucs_offsetof(ucx_perf_result_t,
                                            latency.total_average),
-                              1e6, 0.001, 30.0, 0 };
+                              1e6, 0.001, 30.0, 0,
+                              UCS_MEMORY_TYPE_HOST,
+                              UCS_MEMORY_TYPE_HOST };
     for (i = 0; i < max_iter; i++) {
         perf_iter = run_test(test1, 0, false, "", "");
         perf_avg += perf_iter;
@@ -396,7 +425,9 @@ UCS_TEST_P(test_ucp_wait_mem, envelope) {
                               0, 1, { 8 }, 1, 1000lu,
                               ucs_offsetof(ucx_perf_result_t,
                                            latency.total_average),
-                              1e6, perf_min * 0.3, perf_avg * 3, 0 };
+                              1e6, perf_min * 0.3, perf_avg * 3, 0,
+                              UCS_MEMORY_TYPE_HOST,
+                              UCS_MEMORY_TYPE_HOST };
     run_test(test2, 0, true, "", "");
 }
 

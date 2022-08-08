@@ -1,6 +1,6 @@
 /**
  * Copyright (C) UT-Battelle, LLC. 2015-2017. ALL RIGHTS RESERVED.
- * Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -232,7 +232,7 @@ static UCS_CLASS_CLEANUP_FUNC(uct_ugni_ep_t)
                                              uct_ugni_iface_t);
     gni_return_t ugni_rc;
 
-    ucs_debug("Removinig ep hash %x from iface %p", self->hash_key, iface);
+    ucs_debug("Removing ep hash %x from iface %p", self->hash_key, iface);
 
     ucs_arbiter_group_purge(&iface->arbiter, &self->arb_group,
                             uct_ugni_ep_arbiter_purge_cb, NULL);

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2017.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2017. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -67,7 +67,7 @@ ucp_stream_send_req(ucp_request_t *req, size_t count,
     ucs_status_t status = ucp_request_send_start(req, max_short, zcopy_thresh,
                                                  SIZE_MAX, count, 0,
                                                  req->send.length, msg_config,
-                                                 proto);
+                                                 proto, param);
     if (status != UCS_OK) {
         return UCS_STATUS_PTR(status);
     }
@@ -79,6 +79,9 @@ ucp_stream_send_req(ucp_request_t *req, size_t count,
      */
     ucp_request_send(req);
     if (req->flags & UCP_REQUEST_FLAG_COMPLETED) {
+        /* Coverity wrongly resolves completion callback function to
+         * 'ucp_cm_client_connect_progress' */
+        /* coverity[offset_free] */
         ucp_request_imm_cmpl_param(param, req, send);
     }
 
@@ -152,7 +155,7 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_stream_send_nbx,
         goto out;
     }
 
-    if (ucp_memory_type_cache_is_empty(ep->worker->context)) {
+    if (ucs_memtype_cache_is_empty()) {
         attr_mask = param->op_attr_mask &
                     (UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FLAG_NO_IMM_CMPL);
         if (ucs_likely(attr_mask == 0)) {

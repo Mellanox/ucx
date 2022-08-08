@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -151,12 +151,14 @@ struct ucs_class {
         if (obj != NULL) { \
             _status = UCS_CLASS_INIT(_type, obj, ## __VA_ARGS__); \
             if (_status == UCS_OK) { \
-                *(_obj) = (typeof(*(_obj)))obj; /* Success - assign pointer */ \
+                *(_obj) = (ucs_typeof(*(_obj)))obj; /* Success - assign pointer */ \
             } else { \
                 ucs_class_free(obj); /* Initialization failure */ \
+                *(_obj) = NULL; /* To suppress compiler warning */ \
             } \
         } else { \
             _status = UCS_ERR_NO_MEMORY; /* Allocation failure */ \
+            *(_obj) = NULL; /* To suppress compiler warning */ \
         } \
         \
         (_status); \

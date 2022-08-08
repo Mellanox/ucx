@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -19,7 +19,7 @@ double ucs_get_cpu_clocks_per_sec()
 
     if (!initialized) {
         clocks_per_sec = ucs_arch_get_clocks_per_sec();
-        ucs_debug("measured arch clock speed: %.2f Hz", clocks_per_sec);
+        ucs_debug("arch clock frequency: %.2f Hz", clocks_per_sec);
         initialized = 1;
     }
     return clocks_per_sec;

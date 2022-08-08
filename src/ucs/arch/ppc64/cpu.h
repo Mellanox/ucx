@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2013.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2013. ALL RIGHTS RESERVED.
 * Copyright (C) ARM Ltd. 2016-2017.  ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
@@ -41,12 +41,12 @@ BEGIN_C_DECLS
 
 static inline uint64_t ucs_arch_read_hres_clock()
 {
-#ifndef HAVE_SYS_PLATFORM_PPC_H
+#if HAVE_DECL___PPC_GET_TIMEBASE
+    return __ppc_get_timebase();
+#else
     uint64_t tb;
     asm volatile ("mfspr %0, 268" : "=r" (tb));
     return tb;
-#else
-    return __ppc_get_timebase();
 #endif
 }
 

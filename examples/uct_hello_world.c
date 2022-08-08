@@ -1,6 +1,6 @@
 /**
 * Copyright (C) UT-Battelle, LLC. 2015. ALL RIGHTS RESERVED.
-* Copyright (C) Mellanox Technologies Ltd. 2015-2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2015-2019. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
 
@@ -26,6 +26,7 @@ typedef struct {
 typedef struct {
     char               *server_name;
     uint16_t            server_port;
+    sa_family_t         ai_family;
     func_am_t           func_am_type;
     const char         *dev_name;
     const char         *tl_name;
@@ -367,7 +368,9 @@ static ucs_status_t dev_tl_lookup(const cmd_args_t *cmd_args,
             for (tl_index = 0; tl_index < num_tl_resources; ++tl_index) {
                 if (!strcmp(cmd_args->dev_name, tl_resources[tl_index].dev_name) &&
                     !strcmp(cmd_args->tl_name, tl_resources[tl_index].tl_name)) {
-                    if (!(iface_p->md_attr.cap.reg_mem_types & UCS_BIT(test_mem_type))) {
+                    if ((cmd_args->func_am_type == FUNC_AM_ZCOPY) &&
+                        !(iface_p->md_attr.cap.reg_mem_types &
+                          UCS_BIT(test_mem_type))) {
                         fprintf(stderr, "Unsupported memory type %s by "
                                 UCT_TL_RESOURCE_DESC_FMT" on %s MD\n",
                                 ucs_memory_type_names[test_mem_type],
@@ -448,10 +451,11 @@ int parse_cmd(int argc, char * const argv[], cmd_args_t *args)
 
     /* Defaults */
     args->server_port   = 13337;
+    args->ai_family     = AF_INET;
     args->func_am_type  = FUNC_AM_SHORT;
     args->test_strlen   = 16;
 
-    while ((c = getopt(argc, argv, "ibzd:t:n:p:s:m:h")) != -1) {
+    while ((c = getopt(argc, argv, "6ibzd:t:n:p:s:m:h")) != -1) {
         switch (c) {
         case 'i':
             args->func_am_type = FUNC_AM_SHORT;
@@ -470,6 +474,9 @@ int parse_cmd(int argc, char * const argv[], cmd_args_t *args)
             break;
         case 'n':
             args->server_name = optarg;
+            break;
+        case '6':
+            args->ai_family = AF_INET6;
             break;
         case 'p':
             args->server_port = atoi(optarg);
@@ -561,6 +568,11 @@ int sendrecv(int sock, const void *sbuf, size_t slen, void **rbuf)
     return 0;
 }
 
+static void progress_worker(void *arg)
+{
+    uct_worker_progress((uct_worker_h)arg);
+}
+
 int main(int argc, char **argv)
 {
     uct_device_addr_t   *peer_dev   = NULL;
@@ -600,6 +612,11 @@ int main(int argc, char **argv)
     CHKERR_JUMP(UCS_OK != status, "find supported device and transport",
                 out_destroy_worker);
 
+    /* Set active message handler */
+    status = uct_iface_set_am_handler(if_info.iface, id, hello_world,
+                                      &cmd_args.func_am_type, 0);
+    CHKERR_JUMP(UCS_OK != status, "set callback", out_destroy_iface);
+
     own_dev = (uct_device_addr_t*)calloc(1, if_info.iface_attr.device_addr_len);
     CHKERR_JUMP(NULL == own_dev, "allocate memory for dev addr",
                 out_destroy_iface);
@@ -608,28 +625,25 @@ int main(int argc, char **argv)
     CHKERR_JUMP(NULL == own_iface, "allocate memory for if addr",
                 out_free_dev_addrs);
 
-    /* Get device address */
-    status = uct_iface_get_device_address(if_info.iface, own_dev);
-    CHKERR_JUMP(UCS_OK != status, "get device address", out_free_if_addrs);
+    oob_sock = connect_common(cmd_args.server_name, cmd_args.server_port,
+                              cmd_args.ai_family);
 
-    if (cmd_args.server_name) {
-        oob_sock = client_connect(cmd_args.server_name, cmd_args.server_port);
-    } else {
-        oob_sock = server_connect(cmd_args.server_port);
-    }
     CHKERR_ACTION(oob_sock < 0, "OOB connect",
                   status = UCS_ERR_IO_ERROR; goto out_close_oob_sock);
 
-    res = sendrecv(oob_sock, own_dev, if_info.iface_attr.device_addr_len,
-                   (void **)&peer_dev);
-    CHKERR_ACTION(0 != res, "device exchange",
-                  status = UCS_ERR_NO_MESSAGE; goto out_close_oob_sock);
+    /* Get device address */
+    if (if_info.iface_attr.device_addr_len > 0) {
+        status = uct_iface_get_device_address(if_info.iface, own_dev);
+        CHKERR_JUMP(UCS_OK != status, "get device address", out_free_if_addrs);
 
-    status = (ucs_status_t)uct_iface_is_reachable(if_info.iface, peer_dev, NULL);
-    CHKERR_JUMP(0 == status, "reach the peer", out_close_oob_sock);
+        res = sendrecv(oob_sock, own_dev, if_info.iface_attr.device_addr_len,
+                       (void**)&peer_dev);
+        CHKERR_ACTION(0 != res, "device exchange", status = UCS_ERR_NO_MESSAGE;
+                      goto out_close_oob_sock);
+    }
 
     /* Get interface address */
-    if (if_info.iface_attr.cap.flags & UCT_IFACE_FLAG_CONNECT_TO_IFACE) {
+    if (if_info.iface_attr.iface_addr_len > 0) {
         status = uct_iface_get_address(if_info.iface, own_iface);
         CHKERR_JUMP(UCS_OK != status, "get interface address",
                     out_close_oob_sock);
@@ -638,6 +652,10 @@ int main(int argc, char **argv)
                                         (void **)&peer_iface);
         CHKERR_JUMP(0 != status, "ifaces exchange", out_close_oob_sock);
     }
+
+    status = (ucs_status_t)uct_iface_is_reachable(if_info.iface, peer_dev,
+                                                  peer_iface);
+    CHKERR_JUMP(0 == status, "reach the peer", out_close_oob_sock);
 
     ep_params.field_mask = UCT_EP_PARAM_FIELD_IFACE;
     ep_params.iface      = if_info.iface;
@@ -660,7 +678,7 @@ int main(int argc, char **argv)
 
         /* Connect endpoint to a remote endpoint */
         status = uct_ep_connect_to_ep(ep, peer_dev, peer_ep);
-        if (barrier(oob_sock)) {
+        if (barrier(oob_sock, progress_worker, if_info.worker)) {
             status = UCS_ERR_IO_ERROR;
             goto out_free_ep;
         }
@@ -684,11 +702,6 @@ int main(int argc, char **argv)
                 func_am_max_size(cmd_args.func_am_type, &if_info.iface_attr));
         goto out_free_ep;
     }
-
-    /* Set active message handler */
-    status = uct_iface_set_am_handler(if_info.iface, id, hello_world,
-                                      &cmd_args.func_am_type, 0);
-    CHKERR_JUMP(UCS_OK != status, "set callback", out_free_ep);
 
     if (cmd_args.server_name) {
         char *str = (char *)mem_type_malloc(cmd_args.test_strlen);
@@ -729,7 +742,7 @@ int main(int argc, char **argv)
         }
     }
 
-    if (barrier(oob_sock)) {
+    if (barrier(oob_sock, progress_worker, if_info.worker)) {
         status = UCS_ERR_IO_ERROR;
     }
 

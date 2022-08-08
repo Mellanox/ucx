@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2018.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2018. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -11,6 +11,7 @@
 #include <ucs/profile/profile.h>
 #include <cuda_runtime.h>
 #include <cuda.h>
+#include <nvml.h>
 
 
 #define UCT_CUDA_DEV_NAME       "cuda"
@@ -55,6 +56,26 @@
     UCT_CUDA_FUNC(_func, UCS_LOG_LEVEL_ERROR)
 
 
+#define UCT_NVML_FUNC(_func, _log_level)                        \
+    ({                                                          \
+        ucs_status_t _status = UCS_OK;                          \
+        do {                                                    \
+            nvmlReturn_t _err = (_func);                        \
+            if (NVML_SUCCESS != _err) {                         \
+                ucs_log((_log_level), "%s failed: %s",          \
+                        UCS_PP_MAKE_STRING(_func),              \
+                        nvmlErrorString(_err));                 \
+                _status = UCS_ERR_IO_ERROR;                     \
+            }                                                   \
+        } while (0);                                            \
+        _status;                                                \
+    })
+
+
+#define UCT_NVML_FUNC_LOG_ERR(_func) \
+    UCT_NVML_FUNC(_func, UCS_LOG_LEVEL_ERROR)
+
+
 #define UCT_CUDADRV_FUNC(_func, _log_level)                     \
     ({                                                          \
         ucs_status_t _status = UCS_OK;                          \
@@ -78,24 +99,19 @@
     UCT_CUDADRV_FUNC(_func, UCS_LOG_LEVEL_ERROR)
 
 
-#define UCT_CUDADRV_CTX_ACTIVE(_state) \
-    { \
-        CUdevice _dev; \
-        CUcontext _ctx; \
-        int _flags; \
-        if (CUDA_SUCCESS == cuCtxGetDevice(&_dev)) { \
-            cuDevicePrimaryCtxGetState(_dev, &_flags, &_state); \
-            if (_state == 0) { \
-                /* need to retain for malloc purposes */ \
-                if (CUDA_SUCCESS != cuDevicePrimaryCtxRetain(&_ctx, _dev)) { \
-                    ucs_fatal("unable to retain ctx after detecting device"); \
-                } \
-            } \
-            _state = 1; \
-        } else { \
-            _state = 0; \
-        } \
-    }
+static UCS_F_ALWAYS_INLINE int uct_cuda_base_is_context_active()
+{
+    CUcontext ctx;
+
+    return (CUDA_SUCCESS == cuCtxGetCurrent(&ctx)) && (ctx != NULL);
+}
+
+
+static UCS_F_ALWAYS_INLINE int uct_cuda_base_context_match(CUcontext ctx1,
+                                                           CUcontext ctx2)
+{
+    return ((ctx1 != NULL) && (ctx1 == ctx2));
+}
 
 
 typedef enum uct_cuda_base_gen {
@@ -116,6 +132,7 @@ uct_cuda_base_query_devices(
         unsigned *num_tl_devices_p);
 
 ucs_status_t
-uct_cuda_base_get_sys_dev(CUdevice cuda_device, ucs_sys_device_t *sys_dev_p);
+uct_cuda_base_get_sys_dev(CUdevice cuda_device,
+                          ucs_sys_device_t *sys_dev_p);
 
 #endif

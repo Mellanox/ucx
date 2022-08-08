@@ -1,6 +1,6 @@
 /*
  * Copyright (C) Advanced Micro Devices, Inc. 2019. ALL RIGHTS RESERVED.
- * Copyright (C) Mellanox Technologies Ltd. 2020.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -47,18 +47,10 @@ static double uct_rocm_ipc_iface_get_bw()
     return bw;
 }
 
-static uint64_t uct_rocm_ipc_iface_node_guid(uct_base_iface_t *iface)
-{
-    return ucs_machine_guid() *
-           ucs_string_to_id(iface->md->component->name);
-}
-
 ucs_status_t uct_rocm_ipc_iface_get_device_address(uct_iface_t *tl_iface,
                                                    uct_device_addr_t *addr)
 {
-    uct_base_iface_t *iface = ucs_derived_of(tl_iface, uct_base_iface_t);
-
-    *(uint64_t*)addr = uct_rocm_ipc_iface_node_guid(iface);
+    *(uint64_t*)addr = ucs_get_system_id();
     return UCS_OK;
 }
 
@@ -73,10 +65,8 @@ static int uct_rocm_ipc_iface_is_reachable(const uct_iface_h tl_iface,
                                            const uct_device_addr_t *dev_addr,
                                            const uct_iface_addr_t *iface_addr)
 {
-    uct_rocm_ipc_iface_t  *iface = ucs_derived_of(tl_iface, uct_rocm_ipc_iface_t);
-
-    return ((uct_rocm_ipc_iface_node_guid(&iface->super) ==
-            *((const uint64_t *)dev_addr)) && ((getpid() != *(pid_t *)iface_addr)));
+    return (ucs_get_system_id() == *((const uint64_t*)dev_addr)) &&
+           (getpid() != *(pid_t*)iface_addr);
 }
 
 static ucs_status_t uct_rocm_ipc_iface_query(uct_iface_h tl_iface,
@@ -216,6 +206,7 @@ static ucs_mpool_ops_t uct_rocm_ipc_signal_desc_mpool_ops = {
     .chunk_release = ucs_mpool_chunk_free,
     .obj_init      = uct_rocm_ipc_signal_desc_init,
     .obj_cleanup   = uct_rocm_ipc_signal_desc_cleanup,
+    .obj_str       = NULL
 };
 
 static UCS_CLASS_INIT_FUNC(uct_rocm_ipc_iface_t, uct_md_h md, uct_worker_h worker,
@@ -223,21 +214,21 @@ static UCS_CLASS_INIT_FUNC(uct_rocm_ipc_iface_t, uct_md_h md, uct_worker_h worke
                            const uct_iface_config_t *tl_config)
 {
     ucs_status_t status;
+    ucs_mpool_params_t mp_params;
 
-    UCS_CLASS_CALL_SUPER_INIT(uct_base_iface_t, &uct_rocm_ipc_iface_ops, NULL,
-                              md, worker, params,
+    UCS_CLASS_CALL_SUPER_INIT(uct_base_iface_t, &uct_rocm_ipc_iface_ops, 
+                              &uct_base_iface_internal_ops,
+			      md, worker, params,
                               tl_config UCS_STATS_ARG(params->stats_root)
                               UCS_STATS_ARG(UCT_ROCM_IPC_TL_NAME));
 
-    status = ucs_mpool_init(&self->signal_pool,
-                            0,
-                            sizeof(uct_rocm_ipc_signal_desc_t),
-                            0,
-                            UCS_SYS_CACHE_LINE_SIZE,
-                            128,
-                            1024,
-                            &uct_rocm_ipc_signal_desc_mpool_ops,
-                            "ROCM_IPC signal objects");
+    ucs_mpool_params_reset(&mp_params);
+    mp_params.elem_size       = sizeof(uct_rocm_ipc_signal_desc_t);
+    mp_params.elems_per_chunk = 128;
+    mp_params.max_elems       = 1024;
+    mp_params.ops             = &uct_rocm_ipc_signal_desc_mpool_ops;
+    mp_params.name            = "ROCM_IPC signal objects";
+    status = ucs_mpool_init(&mp_params, &self->signal_pool);
     if (status != UCS_OK) {
         ucs_error("rocm/ipc signal mpool creation failed");
         return status;

@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2021.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2021. ALL RIGHTS RESERVED.
 *
 * Copyright (C) UT-Battelle, LLC. 2015. ALL RIGHTS RESERVED.
 * Copyright (C) ARM Ltd. 2017.  ALL RIGHTS RESERVED
@@ -20,7 +20,7 @@
 #include <common/mem_buffer.h>
 #include <common/test.h>
 #include <vector>
-
+#include <atomic>
 
 
 #define DEFAULT_DELAY_MS           1.0
@@ -168,6 +168,8 @@ protected:
 
         uct_listener_h listener() const;
 
+        uct_listener_h revoke_listener() const;
+
         uct_iface_h iface() const;
 
         const uct_iface_attr& iface_attr() const;
@@ -190,6 +192,7 @@ protected:
                            unsigned other_index);
         void connect_to_sockaddr(unsigned index,
                                  const ucs::sock_addr_storage &remote_addr,
+                                 const ucs::sock_addr_storage *local_addr,
                                  uct_cm_ep_resolve_callback_t resolve_cb,
                                  uct_cm_ep_client_connect_callback_t connect_cb,
                                  uct_ep_disconnect_cb_t disconnect_cb,
@@ -251,6 +254,7 @@ protected:
 
         void pattern_fill(uint64_t seed);
         void pattern_check(uint64_t seed);
+        void memset(int c);
 
         static size_t pack(void *dest, void *arg);
 
@@ -317,7 +321,8 @@ protected:
         }
     }
 
-    void wait_for_bits(volatile uint64_t *flag, uint64_t mask,
+    template <typename FlagType, typename MaskType>
+    void wait_for_bits(FlagType *flag, MaskType mask,
                        double timeout = DEFAULT_TIMEOUT_SEC) const
     {
         ucs_time_t deadline = ucs_get_time() +
@@ -349,8 +354,6 @@ protected:
     virtual void modify_config(const std::string& name, const std::string& value,
                                modify_config_mode_t mode = FAIL_IF_NOT_EXIST);
     bool get_config(const std::string& name, std::string& value) const;
-    void stats_activate();
-    void stats_restore();
 
     virtual bool has_transport(const std::string& tl_name) const;
     virtual bool has_ud() const;
@@ -442,8 +445,7 @@ protected:
     rc_verbs,           \
     dc_mlx5,            \
     ud_verbs,           \
-    ud_mlx5,            \
-    cm
+    ud_mlx5
 
 
 #define UCT_TEST_CMS rdmacm, tcp
@@ -468,11 +470,14 @@ protected:
 #define UCT_TEST_ROCM_MEM_TYPE_TLS \
     rocm_copy
 
-#define UCT_TEST_TLS      \
+#define UCT_TEST_NO_GPU_MEM_TYPE_TLS \
     UCT_TEST_NO_SELF_TLS, \
-    UCT_TEST_CUDA_MEM_TYPE_TLS, \
-    UCT_TEST_ROCM_MEM_TYPE_TLS, \
     self
+
+#define UCT_TEST_TLS \
+    UCT_TEST_NO_GPU_MEM_TYPE_TLS, \
+    UCT_TEST_ROCM_MEM_TYPE_TLS, \
+    UCT_TEST_CUDA_MEM_TYPE_TLS
 
 /**
  * Instantiate the parametrized test case for all transports.
@@ -482,7 +487,7 @@ protected:
 #define UCT_INSTANTIATE_TEST_CASE(_test_case) \
     UCS_PP_FOREACH(_UCT_INSTANTIATE_TEST_CASE, _test_case, UCT_TEST_TLS)
 #define _UCT_INSTANTIATE_TEST_CASE(_test_case, _tl_name) \
-    INSTANTIATE_TEST_CASE_P(_tl_name, _test_case, \
+    INSTANTIATE_TEST_SUITE_P(_tl_name, _test_case, \
                             testing::ValuesIn(_test_case::enum_resources(UCS_PP_QUOTE(_tl_name))));
 
 
@@ -494,6 +499,7 @@ protected:
 #define UCT_INSTANTIATE_IB_TEST_CASE(_test_case) \
     UCS_PP_FOREACH(_UCT_INSTANTIATE_TEST_CASE, _test_case, UCT_TEST_IB_TLS)
 
+
 /**
  * Instantiate the parametrized test case for all transports excluding SELF.
  *
@@ -501,6 +507,24 @@ protected:
  */
 #define UCT_INSTANTIATE_NO_SELF_TEST_CASE(_test_case) \
     UCS_PP_FOREACH(_UCT_INSTANTIATE_TEST_CASE, _test_case, UCT_TEST_NO_SELF_TLS)
+
+
+/**
+ * Instantiate the parametrized test case for all transports excluding GPU.
+ *
+ * @param _test_case  Test case class, derived from uct_test.
+ */
+#define UCT_INSTANTIATE_NO_GPU_TEST_CASE(_test_case) \
+    UCS_PP_FOREACH(_UCT_INSTANTIATE_TEST_CASE, _test_case, UCT_TEST_NO_GPU_MEM_TYPE_TLS)
+
+
+/**
+ * Instantiate the parametrized test case for CUDA.
+ *
+ * @param _test_case  Test case class, derived from uct_test.
+ */
+#define UCT_INSTANTIATE_CUDA_TEST_CASE(_test_case) \
+    UCS_PP_FOREACH(_UCT_INSTANTIATE_TEST_CASE, _test_case, UCT_TEST_CUDA_MEM_TYPE_TLS)
 
 
 /**
@@ -513,7 +537,7 @@ protected:
 
 
 #define _UCT_INSTANTIATE_CM_TEST_CASE(_test_case, _cm_name) \
-    INSTANTIATE_TEST_CASE_P(_cm_name, _test_case, \
+    INSTANTIATE_TEST_SUITE_P(_cm_name, _test_case, \
                             testing::ValuesIn(_test_case::enum_cm_resources( \
                                     UCS_PP_QUOTE(_cm_name))));
 

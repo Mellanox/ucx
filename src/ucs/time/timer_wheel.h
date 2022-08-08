@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2012-2013.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2012-2013. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -97,7 +97,7 @@ static inline ucs_time_t ucs_twheel_get_time(ucs_twheel_t *t)
 }
 
 /**
- * Get current time
+ * Checks for an empty timer wheel
  */
 static UCS_F_ALWAYS_INLINE int ucs_twheel_is_empty(ucs_twheel_t *t)
 {

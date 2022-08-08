@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
 * Copyright (C) ARM Ltd. 2016-2020.  ALL RIGHTS RESERVED.
 * Copyright (C) Stony Brook University. 2016-2020.  ALL RIGHTS RESERVED.
 *
@@ -47,7 +47,6 @@ BEGIN_C_DECLS
  * of DSB. The barrier used for synchronization of access between write back
  * and device mapped memory (PCIe BAR).
  */
-#define ucs_memory_bus_fence()        ucs_aarch64_dmb(oshsy)
 #define ucs_memory_bus_store_fence()  ucs_aarch64_dmb(oshst)
 #define ucs_memory_bus_load_fence()   ucs_aarch64_dmb(oshld)
 
@@ -145,7 +144,8 @@ static inline void ucs_cpu_init()
 
 static inline void ucs_arch_wait_mem(void *address)
 {
-    unsigned long tmp;
+    /* Suppress potential warning that variable was set but never used */
+    unsigned long UCS_V_UNUSED tmp;
     asm volatile ("ldaxrb %w0, [%1] \n"
                   "wfe           \n"
                   : "=&r"(tmp)
@@ -209,7 +209,7 @@ static inline void ucs_arch_clear_cache(void *start, void *end)
     dic = (ctr_el0 >> 29) & 0x1;
     idc = (ctr_el0 >> 28) & 0x1;
 
-    /* 
+    /*
      * Check if Data cache clean to the Point of Unification is required for instruction to
      * data coherence
      */

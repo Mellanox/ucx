@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -12,7 +12,7 @@
 typedef struct uct_rdmacm_listener {
     uct_listener_t                          super;
 
-    /** The rdmacm id assiciated with the listener */
+    /** The rdmacm id associated with the listener */
     struct rdma_cm_id                       *id;
 
     /** Callback to invoke upon receiving a connection request from a client */

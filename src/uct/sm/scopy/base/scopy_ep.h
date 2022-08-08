@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2020.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -30,7 +30,7 @@ typedef enum uct_scopy_tx_op {
  * @param [in]     iov_cnt           The number of the elements in the array of UCT IOVs.
  * @param [in]     uct_iov_iter_p    The pointer to the UCT IOV iterator.
  * @param [in/out] length_p          Input: The maximal total length of the data that
- *                                   can be transferred in a signle call. Output: The
+ *                                   can be transferred in a single call. Output: The
  *                                   resulted length of the data that was transferred.
  * @param [in]     remote_addr       The address of the remote data buffer.
  * @param [in]     rkey              The remote memory key.

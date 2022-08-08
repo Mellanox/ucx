@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2013.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2013. ALL RIGHTS RESERVED.
 * Copyright (C) UT-Battelle, LLC. 2014. ALL RIGHTS RESERVED.
 * Copyright (C) Huawei Technologies Co., Ltd. 2021.  ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
@@ -67,7 +67,7 @@ public:
 
         ucs_status_t status = UCS_STATS_NODE_ALLOC(cat_node,
                                                    &category_stats_class,
-                                                   ucs_stats_get_root());
+                                                   ucs_stats_get_root(), "");
         ASSERT_UCS_OK(status);
         for (unsigned i = 0; i < NUM_DATA_NODES; ++i) {
             status = UCS_STATS_NODE_ALLOC(&data_nodes[i], m_data_stats_class,
@@ -117,7 +117,7 @@ public:
         }
     }
 
-protected:    
+protected:
     static const unsigned NUM_COUNTERS   = 4;
 
     ucs_stats_class_t *m_data_stats_class;
@@ -295,8 +295,8 @@ UCS_TEST_F(stats_on_demand_test, null_root) {
     static ucs_stats_class_t category_stats_class = {
         "category", 0
     };
-    ucs_status_t status = UCS_STATS_NODE_ALLOC(&cat_node, &category_stats_class,
-                                               NULL);
+    ucs_status_t status                           =
+            UCS_STATS_NODE_ALLOC(&cat_node, &category_stats_class, NULL, "");
 
     EXPECT_GE(status, UCS_ERR_INVALID_PARAM);
 }

@@ -1,5 +1,5 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2001-2018.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2018. ALL RIGHTS RESERVED.
 # See file LICENSE for terms.
 #
 
@@ -24,7 +24,7 @@ AS_IF([test "x$with_knem" != xno],
                     knem_happy="yes"],
                    [AS_IF([test "x$with_knem" != xguess],
                           [AC_MSG_ERROR([KNEM requested but required file (knem_io.h) could not be found])],
-                          [AC_MSG_WARN([KNEM requested but required file (knem_io.h) could not be found])])], 
+                          [AC_MSG_WARN([KNEM requested but required file (knem_io.h) could not be found])])],
                    [[#include <knem_io.h>]])
 
      CPPFLAGS="$save_CPPFLAGS"
@@ -34,4 +34,5 @@ AS_IF([test "x$with_knem" != xno],
 )
 
 AM_CONDITIONAL([HAVE_KNEM], [test "x$knem_happy" != xno])
-AC_CONFIG_FILES([src/uct/sm/scopy/knem/Makefile])
+AC_CONFIG_FILES([src/uct/sm/scopy/knem/Makefile
+                 src/uct/sm/scopy/knem/ucx-knem.pc])

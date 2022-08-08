@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2016.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2016. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -18,6 +18,18 @@ static UCS_F_ALWAYS_INLINE int
 uct_ib_mlx5_cqe_is_hw_owned(uint8_t op_own, unsigned cqe_index, unsigned mask)
 {
     return (op_own & MLX5_CQE_OWNER_MASK) == !(cqe_index & mask);
+}
+
+/**
+ * Checks that cqe_format is equal to 3 (cqe is a part of compression block)
+ * or opcode contains information about error.
+ */
+static UCS_F_ALWAYS_INLINE int
+uct_ib_mlx5_cqe_is_error_or_zipped(uint8_t op_own)
+{
+    static const uint8_t mask = UCT_IB_MLX5_CQE_FORMAT_MASK |
+                                UCT_IB_MLX5_CQE_OP_OWN_ERR_MASK;
+    return (op_own & mask) >= UCT_IB_MLX5_CQE_FORMAT_MASK;
 }
 
 static UCS_F_ALWAYS_INLINE int
@@ -62,6 +74,30 @@ uct_ib_mlx5_gid_from_cqe(struct mlx5_cqe64* cqe)
     return UCS_PTR_BYTE_OFFSET(cqe, -UCT_IB_GRH_LEN);
 }
 
+
+static UCS_F_ALWAYS_INLINE void
+uct_ib_mlx5_update_db_cq_ci(uct_ib_mlx5_cq_t *cq)
+{
+#if UCS_ENABLE_ASSERT
+    cq->dbrec[UCT_IB_MLX5_CQ_SET_CI] = htobe32(cq->cq_ci & 0xffffff);
+#endif
+}
+
+
+static UCS_F_ALWAYS_INLINE int
+uct_ib_mlx5_check_and_init_zipped(uct_ib_mlx5_cq_t *cq, struct mlx5_cqe64 *cqe)
+{
+    if (cq->cq_unzip.current_idx > 0) {
+        return 1;
+    } else if ((cqe->op_own & UCT_IB_MLX5_CQE_FORMAT_MASK) == UCT_IB_MLX5_CQE_FORMAT_MASK) {
+        /* First zipped CQE in the sequence */
+        uct_ib_mlx5_iface_cqe_unzip_init(cqe, cq);
+        return 1;
+    }
+    return 0;
+}
+
+
 static UCS_F_ALWAYS_INLINE struct mlx5_cqe64*
 uct_ib_mlx5_poll_cq(uct_ib_iface_t *iface, uct_ib_mlx5_cq_t *cq)
 {
@@ -75,11 +111,8 @@ uct_ib_mlx5_poll_cq(uct_ib_iface_t *iface, uct_ib_mlx5_cq_t *cq)
 
     if (ucs_unlikely(uct_ib_mlx5_cqe_is_hw_owned(op_own, cqe_index, cq->cq_length))) {
         return NULL;
-    } else if (ucs_unlikely(op_own & UCT_IB_MLX5_CQE_OP_OWN_ERR_MASK)) {
-        UCS_STATIC_ASSERT(MLX5_CQE_INVALID & (UCT_IB_MLX5_CQE_OP_OWN_ERR_MASK >> 4));
-        ucs_assert((op_own >> 4) != MLX5_CQE_INVALID);
-        uct_ib_mlx5_check_completion(iface, cq, cqe);
-        return NULL; /* No CQE */
+    } else if (ucs_unlikely(uct_ib_mlx5_cqe_is_error_or_zipped(op_own))) {
+        return uct_ib_mlx5_check_completion(iface, cq, cqe);
     }
 
     cq->cq_ci = cqe_index + 1;
@@ -97,55 +130,6 @@ uct_ib_mlx5_txwq_update_bb(uct_ib_mlx5_txwq_t *wq, uint16_t hw_ci)
 }
 
 
-/* check that work queue has enough space for the new work request */
-static inline void
-uct_ib_mlx5_txwq_validate(uct_ib_mlx5_txwq_t *wq, uint16_t num_bb)
-{
-
-#if UCS_ENABLE_ASSERT
-    uint16_t wqe_s, wqe_e;
-    uint16_t hw_ci, sw_pi;
-    uint16_t wqe_cnt;
-    int is_ok = 1;
-
-    if (wq->hw_ci == 0xFFFF) {
-        return;
-    }
-
-    wqe_cnt = UCS_PTR_BYTE_DIFF(wq->qstart, wq->qend) / MLX5_SEND_WQE_BB;
-    if (wqe_cnt < wq->bb_max) {
-        ucs_fatal("wqe count (%u) < bb_max (%u)", wqe_cnt, wq->bb_max);
-    }
-
-    wqe_s = UCS_PTR_BYTE_DIFF(wq->qstart, wq->curr) / MLX5_SEND_WQE_BB;
-    wqe_e = (wqe_s + num_bb) % wqe_cnt;
-
-    sw_pi = wq->prev_sw_pi % wqe_cnt;
-    hw_ci = wq->hw_ci % wqe_cnt;
-
-    if (hw_ci <= sw_pi) {
-        if (hw_ci <= wqe_s && wqe_s <= sw_pi) {
-            is_ok = 0;
-        }
-        if (hw_ci <= wqe_e && wqe_e <= sw_pi) {
-            is_ok = 0;
-        }
-    }
-    else {
-        if (!(sw_pi < wqe_s && wqe_s < hw_ci)) {
-            is_ok = 0;
-        }
-        if (!(sw_pi < wqe_e && wqe_e < hw_ci)) {
-            is_ok = 0;
-        }
-    }
-    if (!is_ok) {
-        ucs_fatal("tx wq overrun: hw_ci: %u sw_pi: %u cur: %u-%u num_bb: %u wqe_cnt: %u",
-                hw_ci, sw_pi, wqe_s, wqe_e, num_bb, wqe_cnt);
-    }
-#endif
-}
-
 
 static UCS_F_ALWAYS_INLINE void
 uct_ib_mlx5_txwq_update_flags(uct_ib_mlx5_txwq_t *txwq, uint32_t flags_add,
@@ -153,6 +137,25 @@ uct_ib_mlx5_txwq_update_flags(uct_ib_mlx5_txwq_t *txwq, uint32_t flags_add,
 {
 #if UCS_ENABLE_ASSERT
     txwq->flags = (txwq->flags | flags_add) & ~flags_remove;
+#endif
+}
+
+
+/**
+ * Check the work queue is in a consistent state, and that it has enough space
+ * for the new work request.
+ *
+ * @param wq             Work queue to validate.
+ * @param num_bb         How much we are posting now.
+ * @param hw_ci_updated  Whether wq->hw_ci field kept up-to-date on this
+ *                       workqueue.
+ */
+static UCS_F_ALWAYS_INLINE void
+uct_ib_mlx5_txwq_validate(uct_ib_mlx5_txwq_t *wq, uint16_t num_bb,
+                          int hw_ci_updated)
+{
+#if UCS_ENABLE_ASSERT
+    uct_ib_mlx5_txwq_validate_always(wq, num_bb, hw_ci_updated);
 #endif
 }
 
@@ -199,17 +202,17 @@ uct_ib_mlx5_inline_iov_copy(void *restrict dest, const uct_iov_t *iov,
                             size_t iovcnt, size_t length,
                             uct_ib_mlx5_txwq_t *wq)
 {
-    ptrdiff_t remainder;
+    ptrdiff_t remainder_val;
     ucs_iov_iter_t iov_iter;
 
     ucs_assert(dest != NULL);
 
     ucs_iov_iter_init(&iov_iter);
-    remainder = UCS_PTR_BYTE_DIFF(dest, wq->qend);
-    if (ucs_likely(length <= remainder)) {
+    remainder_val = UCS_PTR_BYTE_DIFF(dest, wq->qend);
+    if (ucs_likely(length <= remainder_val)) {
         uct_iov_to_buffer(iov, iovcnt, &iov_iter, dest, SIZE_MAX);
     } else {
-        uct_iov_to_buffer(iov, iovcnt, &iov_iter, dest, remainder);
+        uct_iov_to_buffer(iov, iovcnt, &iov_iter, dest, remainder_val);
         uct_iov_to_buffer(iov, iovcnt, &iov_iter, wq->qstart, SIZE_MAX);
     }
 }
@@ -488,8 +491,8 @@ void *uct_ib_mlx5_bf_copy(void *dst, void *src, uint16_t num_bb,
 }
 
 static UCS_F_ALWAYS_INLINE uint16_t
-uct_ib_mlx5_post_send(uct_ib_mlx5_txwq_t *wq,
-                      struct mlx5_wqe_ctrl_seg *ctrl, unsigned wqe_size)
+uct_ib_mlx5_post_send(uct_ib_mlx5_txwq_t *wq, struct mlx5_wqe_ctrl_seg *ctrl,
+                      unsigned wqe_size, int hw_ci_updated)
 {
     uint16_t sw_pi, num_bb, res_count;
     void *src, *dst;
@@ -498,7 +501,8 @@ uct_ib_mlx5_post_send(uct_ib_mlx5_txwq_t *wq,
     num_bb  = ucs_div_round_up(wqe_size, MLX5_SEND_WQE_BB);
     sw_pi   = wq->sw_pi;
 
-    uct_ib_mlx5_txwq_validate(wq, num_bb);
+    uct_ib_mlx5_txwq_validate(wq, num_bb, hw_ci_updated);
+
     /* TODO Put memory store fence here too, to prevent WC being flushed after DBrec */
     ucs_memory_cpu_store_fence();
 
@@ -524,8 +528,15 @@ uct_ib_mlx5_post_send(uct_ib_mlx5_txwq_t *wq,
          */
         ucs_memory_cpu_wc_fence();
     } else {
-        ucs_assert(wq->reg->mode == UCT_IB_MLX5_MMIO_MODE_DB);
-        *(volatile uint64_t*)dst = *(volatile uint64_t*)src;
+        if (wq->reg->mode == UCT_IB_MLX5_MMIO_MODE_DB) {
+            *(volatile uint64_t*)dst = *(volatile uint64_t*)src;
+        } else {
+            ucs_assert(wq->reg->mode == UCT_IB_MLX5_MMIO_MODE_DB_LOCK);
+            ucs_spin_lock(&wq->reg->db_lock);
+            *(volatile uint64_t*)dst = *(volatile uint64_t*)src;
+            ucs_spin_unlock(&wq->reg->db_lock);
+        }
+
         ucs_memory_bus_store_fence();
         src = UCS_PTR_BYTE_OFFSET(src, num_bb * MLX5_SEND_WQE_BB);
         src = uct_ib_mlx5_txwq_wrap_any(wq, src);
@@ -559,22 +570,12 @@ uct_ib_mlx5_srq_get_wqe(uct_ib_mlx5_srq_t *srq, uint16_t wqe_index)
     return UCS_PTR_BYTE_OFFSET(srq->buf, (wqe_index & srq->mask) * srq->stride);
 }
 
-static ucs_status_t UCS_F_MAYBE_UNUSED
+static void UCS_F_MAYBE_UNUSED
 uct_ib_mlx5_iface_fill_attr(uct_ib_iface_t *iface,
                             uct_ib_mlx5_qp_t *qp,
                             uct_ib_mlx5_qp_attr_t *attr)
 {
-    ucs_status_t status;
-
-    status = uct_ib_mlx5_iface_get_res_domain(iface, qp);
-    if (status != UCS_OK) {
-        return status;
-    }
-
-#if HAVE_DECL_IBV_EXP_CREATE_QP
-    attr->super.ibv.comp_mask       = IBV_EXP_QP_INIT_ATTR_PD;
-    attr->super.ibv.pd              = uct_ib_iface_md(iface)->pd;
-#elif HAVE_DECL_IBV_CREATE_QP_EX
+#if HAVE_DECL_IBV_CREATE_QP_EX
     attr->super.ibv.comp_mask       = IBV_QP_INIT_ATTR_PD;
     if (qp->verbs.rd->pd != NULL) {
         attr->super.ibv.pd          = qp->verbs.rd->pd;
@@ -582,11 +583,18 @@ uct_ib_mlx5_iface_fill_attr(uct_ib_iface_t *iface,
         attr->super.ibv.pd          = uct_ib_iface_md(iface)->pd;
     }
 #endif
+}
 
-#ifdef HAVE_IBV_EXP_RES_DOMAIN
-    attr->super.ibv.comp_mask      |= IBV_EXP_QP_INIT_ATTR_RES_DOMAIN;
-    attr->super.ibv.res_domain      = qp->verbs.rd->ibv_domain;
-#endif
 
-    return UCS_OK;
+static void UCS_F_ALWAYS_INLINE
+uct_ib_mlx5_update_cqe_zipping_stats(uct_ib_iface_t *iface,
+                                     uct_ib_mlx5_cq_t *cq)
+{
+    if ((cq->cq_unzip.title.op_own >> 4) == MLX5_CQE_REQ) {
+        UCS_STATS_UPDATE_COUNTER(iface->stats,
+                                 UCT_IB_IFACE_STAT_TX_COMPLETION_ZIPPED, 1);
+    } else {
+        UCS_STATS_UPDATE_COUNTER(iface->stats,
+                                 UCT_IB_IFACE_STAT_RX_COMPLETION_ZIPPED, 1);
+    }
 }

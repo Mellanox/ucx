@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -40,6 +40,7 @@ static void usage() {
     printf("                    'a' : atomic operations\n");
     printf("                    'r' : remote memory access\n");
     printf("                    't' : tag matching \n");
+    printf("                    's' : stream \n");
     printf("                    'm' : active messages \n");
     printf("                  Modifiers to use in combination with above features:\n");
     printf("                    'w' : wakeup\n");
@@ -57,11 +58,18 @@ static void usage() {
     printf("                    'self'  : same process (default)\n");
     printf("                    'intra' : same node\n");
     printf("                    'inter' : different node\n");
-    /* TODO: add IPv6 support */
-    printf("  -A <ipv4>       Local IPv4 device address to use for creating\n"
+    printf("  -A <ip>         Local IP device address to use for creating\n"
            "                  endpoint in client/server mode\n");
+    printf("  -6              IPv6 address specified with option -A\n");
+    printf("  -T              Print system topology\n");
+    printf("  -M              Print memory copy bandwidth\n");
     printf("  -h              Show this help message\n");
     printf("\n");
+}
+
+static void ep_error_callback(void *arg, ucp_ep_h ep, ucs_status_t status)
+{
+    /* Empty error callback */
 }
 
 int main(int argc, char **argv)
@@ -70,6 +78,7 @@ int main(int argc, char **argv)
                                            UCP_FEATURE_AMO64 | UCP_FEATURE_RMA |
                                            UCP_FEATURE_TAG | UCP_FEATURE_AM;
     char *ip_addr = NULL;
+    sa_family_t ip_addr_family;
     ucs_config_print_flags_t print_flags;
     ucp_ep_params_t ucp_ep_params;
     unsigned dev_type_bitmap;
@@ -92,8 +101,9 @@ int main(int argc, char **argv)
     dev_type_bitmap          = UINT_MAX;
     proc_placement           = PROCESS_PLACEMENT_SELF;
     ucp_ep_params.field_mask = 0;
+    ip_addr_family           = AF_INET;
 
-    while ((c = getopt(argc, argv, "fahvcydbswpeCt:n:u:D:P:m:N:A:")) != -1) {
+    while ((c = getopt(argc, argv, "fahvc6ydbswpeCt:n:u:D:P:m:N:A:TM")) != -1) {
         switch (c) {
         case 'f':
             print_flags |= UCS_CONFIG_PRINT_CONFIG | UCS_CONFIG_PRINT_HEADER | UCS_CONFIG_PRINT_DOC;
@@ -156,6 +166,9 @@ int main(int argc, char **argv)
                 case 't':
                     ucp_features |= UCP_FEATURE_TAG;
                     break;
+                case 's':
+                    ucp_features |= UCP_FEATURE_STREAM;
+                    break;
                 case 'm':
                     ucp_features |= UCP_FEATURE_AM;
                     break;
@@ -163,8 +176,11 @@ int main(int argc, char **argv)
                     ucp_features |= UCP_FEATURE_WAKEUP;
                     break;
                 case 'e':
-                    ucp_ep_params.field_mask |= UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
-                    ucp_ep_params.err_mode    = UCP_ERR_HANDLING_MODE_PEER;
+                    ucp_ep_params.field_mask |=
+                            UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE |
+                            UCP_EP_PARAM_FIELD_ERR_HANDLER;
+                    ucp_ep_params.err_mode       = UCP_ERR_HANDLING_MODE_PEER;
+                    ucp_ep_params.err_handler.cb = ep_error_callback;
                     break;
                 default:
                     usage();
@@ -202,6 +218,15 @@ int main(int argc, char **argv)
         case 'A':
             ip_addr = optarg;
             break;
+        case '6':
+            ip_addr_family = AF_INET6;
+            break;
+        case 'T':
+            print_opts |= PRINT_SYS_TOPO;
+            break;
+        case 'M':
+            print_opts |= PRINT_MEMCPY_BW;
+            break;
         case 'h':
             usage();
             return 0;
@@ -220,10 +245,6 @@ int main(int argc, char **argv)
         print_version();
     }
 
-    if (print_opts & PRINT_SYS_INFO) {
-        print_sys_info();
-    }
-
     if (print_opts & PRINT_BUILD_CONFIG) {
         print_build_config();
     }
@@ -232,11 +253,16 @@ int main(int argc, char **argv)
         print_type_info(tl_name);
     }
 
-    if ((print_opts & PRINT_DEVICES) || (print_flags & UCS_CONFIG_PRINT_CONFIG)) {
+    if ((print_opts & (PRINT_DEVICES | PRINT_SYS_TOPO)) ||
+        (print_flags & UCS_CONFIG_PRINT_CONFIG)) {
         /* if UCS_CONFIG_PRINT_CONFIG is ON, trigger loading UCT modules by
          * calling print_uct_info()->uct_component_query()
          */
         print_uct_info(print_opts, print_flags, tl_name);
+    }
+
+    if (print_opts & (PRINT_SYS_INFO | PRINT_MEMCPY_BW | PRINT_SYS_TOPO)) {
+        print_sys_info(print_opts);
     }
 
     if (print_flags & UCS_CONFIG_PRINT_CONFIG) {
@@ -255,7 +281,7 @@ int main(int argc, char **argv)
         return print_ucp_info(print_opts, print_flags, ucp_features,
                               &ucp_ep_params, ucp_num_eps, ucp_num_ppn,
                               dev_type_bitmap, proc_placement, mem_size,
-                              ip_addr);
+                              ip_addr, ip_addr_family);
     }
 
     return 0;

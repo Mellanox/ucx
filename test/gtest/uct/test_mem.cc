@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -258,7 +258,7 @@ UCS_TEST_P(test_mem, mmap_fixed) {
     }
 }
 
-INSTANTIATE_TEST_CASE_P(alloc_methods, test_mem,
+INSTANTIATE_TEST_SUITE_P(alloc_methods, test_mem,
                         ::testing::Values(UCT_ALLOC_METHOD_THP,
                                           UCT_ALLOC_METHOD_HEAP,
                                           UCT_ALLOC_METHOD_MMAP,

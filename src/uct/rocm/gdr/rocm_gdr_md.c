@@ -39,7 +39,7 @@ static ucs_status_t uct_rocm_gdr_md_query(uct_md_h md, uct_md_attr_t *md_attr)
     md_attr->cap.max_alloc        = 0;
     md_attr->cap.max_reg          = ULONG_MAX;
     md_attr->rkey_packed_size     = sizeof(uct_rocm_gdr_key_t);
-    md_attr->reg_cost             = ucs_linear_func_make(0, 0);
+    md_attr->reg_cost             = UCS_LINEAR_FUNC_ZERO;
     memset(&md_attr->local_cpus, 0xff, sizeof(md_attr->local_cpus));
     return UCS_OK;
 }
@@ -82,8 +82,9 @@ static ucs_status_t uct_rocm_gdr_rkey_release(uct_component_t *component,
     return UCS_OK;
 }
 
-static ucs_status_t uct_rocm_gdr_mem_reg(uct_md_h md, void *address, size_t length,
-                                         unsigned flags, uct_mem_h *memh_p)
+static ucs_status_t
+uct_rocm_gdr_mem_reg(uct_md_h md, void *address, size_t length,
+                     const uct_md_mem_reg_params_t *params, uct_mem_h *memh_p)
 {
     uct_rocm_gdr_mem_t *mem_hndl = NULL;
 
@@ -161,7 +162,8 @@ uct_component_t uct_rocm_gdr_component = {
     },
     .cm_config          = UCS_CONFIG_EMPTY_GLOBAL_LIST_ENTRY,
     .tl_list            = UCT_COMPONENT_TL_LIST_INITIALIZER(&uct_rocm_gdr_component),
-    .flags              = 0
+    .flags              = 0,
+    .md_vfs_init        = (uct_component_md_vfs_init_func_t)ucs_empty_function
 };
 UCT_COMPONENT_REGISTER(&uct_rocm_gdr_component);
 

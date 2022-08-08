@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2016-2018.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2016-2018. ALL RIGHTS RESERVED.
 
 * See file LICENSE for terms.
 */
@@ -21,48 +21,59 @@
  * HW tag matching
  */
 #if IBV_HW_TM
-#  if HAVE_INFINIBAND_TM_TYPES_H
 /* upstream tm_types.h doesn't provide RAVH header */
 struct ibv_ravh {
     uint32_t    sl_dct;
     uint32_t    reserved;    /* must be zero */
     uint64_t    dc_access_key;
 };
-#  else
-#    define ibv_ravh            ibv_exp_tmh_ravh
-#  endif
 #  define UCT_DC_RNDV_HDR_LEN   (sizeof(struct ibv_rvh) + \
                                  sizeof(struct ibv_ravh))
 #else
 #  define UCT_DC_RNDV_HDR_LEN   0
 #endif
 
-#define UCT_DC_MLX5_IFACE_MAX_USER_DCIS 15
 #define UCT_DC_MLX5_KEEPALIVE_NUM_DCIS  1
 #define UCT_DC_MLX5_IFACE_MAX_DCI_POOLS 8
-#define UCT_DC_MLX5_IFACE_MAX_DCIS      ((UCT_DC_MLX5_IFACE_MAX_USER_DCIS * \
-                                          UCT_DC_MLX5_IFACE_MAX_DCI_POOLS) + \
-                                          UCT_DC_MLX5_KEEPALIVE_NUM_DCIS)
 
 #define UCT_DC_MLX5_IFACE_ADDR_TM_ENABLED(_addr) \
     (!!((_addr)->flags & UCT_DC_MLX5_IFACE_ADDR_HW_TM))
 
 #define UCT_DC_MLX5_IFACE_TXQP_DCI_GET(_iface, _dci, _txqp, _txwq) \
     { \
+        ucs_assert(_dci != UCT_DC_MLX5_EP_NO_DCI); \
         _txqp = &(_iface)->tx.dcis[_dci].txqp; \
         _txwq = &(_iface)->tx.dcis[_dci].txwq; \
     }
+
+/**
+ * Set iface config flag for enabling full handshake on DCI/DCT,
+ * according to user configuration. Fail if the user requests to
+ * force full-handshake, while the HW does not support it.
+ */
+#define UCT_DC_MLX5_CHECK_FORCE_FULL_HANDSHAKE(_self, _config, _config_name, \
+                                               _flag_name, _status, _err) \
+    if (!((_self)->version_flag & UCT_DC_MLX5_IFACE_ADDR_DC_V2) && \
+        ((_config)->_config_name##_full_handshake == UCS_YES)) { \
+        _status = UCS_ERR_UNSUPPORTED; \
+        goto _err; \
+    } \
+    if ((_config)->_config_name##_full_handshake != UCS_NO) { \
+        (_self)->flags |= UCT_DC_MLX5_IFACE_FLAG_##_flag_name##_FULL_HANDSHAKE; \
+    }
+
 
 typedef struct uct_dc_mlx5_ep     uct_dc_mlx5_ep_t;
 typedef struct uct_dc_mlx5_iface  uct_dc_mlx5_iface_t;
 
 
 typedef enum {
-    UCT_DC_MLX5_IFACE_ADDR_HW_TM   = UCS_BIT(0),
-    UCT_DC_MLX5_IFACE_ADDR_DC_V1   = UCS_BIT(1),
-    UCT_DC_MLX5_IFACE_ADDR_DC_V2   = UCS_BIT(2),
-    UCT_DC_MLX5_IFACE_ADDR_DC_VERS = UCT_DC_MLX5_IFACE_ADDR_DC_V1 |
-                                     UCT_DC_MLX5_IFACE_ADDR_DC_V2
+    UCT_DC_MLX5_IFACE_ADDR_HW_TM      = UCS_BIT(0),
+    UCT_DC_MLX5_IFACE_ADDR_DC_V1      = UCS_BIT(1),
+    UCT_DC_MLX5_IFACE_ADDR_DC_V2      = UCS_BIT(2),
+    UCT_DC_MLX5_IFACE_ADDR_FLUSH_RKEY = UCS_BIT(3),
+    UCT_DC_MLX5_IFACE_ADDR_DC_VERS    = UCT_DC_MLX5_IFACE_ADDR_DC_V1 |
+                                        UCT_DC_MLX5_IFACE_ADDR_DC_V2
 } uct_dc_mlx5_iface_addr_flags_t;
 
 
@@ -77,7 +88,16 @@ typedef enum {
     UCT_DC_MLX5_IFACE_FLAG_UIDX                     = UCS_BIT(2),
 
     /** Flow control endpoint is using a DCI in error state */
-    UCT_DC_MLX5_IFACE_FLAG_FC_EP_FAILED             = UCS_BIT(3)
+    UCT_DC_MLX5_IFACE_FLAG_FC_EP_FAILED             = UCS_BIT(3),
+
+    /** Enable full handshake for DCI */
+    UCT_DC_MLX5_IFACE_FLAG_DCI_FULL_HANDSHAKE       = UCS_BIT(4),
+
+    /** Enable full handshake for DCT */
+    UCT_DC_MLX5_IFACE_FLAG_DCT_FULL_HANDSHAKE       = UCS_BIT(5),
+
+    /** Disable PUT capability (RDMA_WRITE) */
+    UCT_DC_MLX5_IFACE_FLAG_DISABLE_PUT              = UCS_BIT(6)
 } uct_dc_mlx5_iface_flags_t;
 
 
@@ -86,6 +106,15 @@ typedef struct uct_dc_mlx5_iface_addr {
     uint8_t           atomic_mr_id;
     uint8_t           flags;
 } UCS_S_PACKED uct_dc_mlx5_iface_addr_t;
+
+
+typedef struct uct_dc_mlx5_iface_flush_addr {
+    uct_dc_mlx5_iface_addr_t super;
+    /* this is upper 16 bit of rkey used for flush_remote operation,
+     * middle 8 bit is stored in atomic_mr_id of uct_dc_mlx5_iface_addr_t
+     * structure, the lowest 8 bit must be 0 (not stored) */
+    uint16_t                 flush_rkey_hi;
+} UCS_S_PACKED uct_dc_mlx5_iface_flush_addr_t;
 
 
 /**
@@ -134,9 +163,9 @@ typedef struct uct_dc_mlx5_iface_config {
     uct_ud_iface_common_config_t        ud_common;
     int                                 ndci;
     int                                 tx_policy;
-    int                                 dci_full_handshake;
-    int                                 dci_ka_full_handshake;
-    int                                 dct_full_handshake;
+    ucs_ternary_auto_value_t            dci_full_handshake;
+    ucs_ternary_auto_value_t            dci_ka_full_handshake;
+    ucs_ternary_auto_value_t            dct_full_handshake;
     unsigned                            quota;
     unsigned                            rand_seed;
     ucs_time_t                          fc_hard_req_timeout;
@@ -197,11 +226,27 @@ typedef struct uct_dc_mlx5_ep_fc_entry {
 KHASH_MAP_INIT_INT64(uct_dc_mlx5_fc_hash, uct_dc_mlx5_ep_fc_entry_t);
 
 
+/* DCI pool
+ * same array is used to store DCI's to allocate and DCI's to release:
+ * 
+ * +--------------+-----+-------------+
+ * | to release   |     | to allocate |
+ * +--------------+-----+-------------+
+ * ^              ^     ^             ^
+ * |              |     |             |
+ * 0        release     stack      ndci
+ *              top     top
+ * 
+ * Overall count of DCI's to release and allocated DCI's could not be more than
+ * ndci and these stacks are not intersected
+ */
 typedef struct {
-    uint8_t       stack_top;                               /* dci stack top */
-    uint8_t       stack[UCT_DC_MLX5_IFACE_MAX_USER_DCIS];  /* LIFO of indexes of available dcis */
-    ucs_arbiter_t arbiter;                                 /* queue of requests
-                                                              waiting for DCI */
+    int8_t        stack_top;         /* dci stack top */
+    uint8_t       *stack;            /* LIFO of indexes of available dcis */
+    ucs_arbiter_t arbiter;           /* queue of requests waiting for DCI */
+    int8_t        release_stack_top; /* releasing dci's stack,
+                                        points to last DCI to release
+                                        or -1 if no DCI's to release */
 } uct_dc_mlx5_dci_pool_t;
 
 
@@ -209,7 +254,7 @@ struct uct_dc_mlx5_iface {
     uct_rc_mlx5_iface_common_t    super;
     struct {
         /* Array of dcis */
-        uct_dc_dci_t              dcis[UCT_DC_MLX5_IFACE_MAX_DCIS];
+        uct_dc_dci_t              *dcis;
 
         uint8_t                   ndci;                        /* Number of DCIs */
 
@@ -235,6 +280,12 @@ struct uct_dc_mlx5_iface {
         /* Timeout for sending FC_HARD_REQ when FC window is empty */
         ucs_time_t                fc_hard_req_timeout;
 
+        /* Next time when FC_HARD_REQ operations should be resent */
+        ucs_time_t                fc_hard_req_resend_time;
+
+        /* Callback ID of FC_HARD_REQ resend operation */
+        uct_worker_cb_id_t        fc_hard_req_progress_cb_id;
+
         /* Seed used for random dci allocation */
         unsigned                  rand_seed;
 
@@ -242,7 +293,7 @@ struct uct_dc_mlx5_iface {
 
         uct_worker_cb_id_t        dci_release_prog_id;
 
-        ucs_bitmap_t(128)         dci_release_bitmap;
+        uint8_t                   dci_pool_release_bitmap;
     } tx;
 
     struct {
@@ -252,7 +303,7 @@ struct uct_dc_mlx5_iface {
     uint8_t                       version_flag;
 
     /* iface flags, see uct_dc_mlx5_iface_flags_t */
-    uint8_t                       flags;
+    uint16_t                      flags;
 
     uint8_t                       keepalive_dci;
 
@@ -280,9 +331,10 @@ ucs_status_t uct_dc_mlx5_iface_init_fc_ep(uct_dc_mlx5_iface_t *iface);
 
 ucs_status_t uct_dc_mlx5_iface_fc_grant(uct_pending_req_t *self);
 
-ucs_status_t uct_dc_mlx5_iface_fc_handler(uct_rc_iface_t *rc_iface, unsigned qp_num,
-                                          uct_rc_hdr_t *hdr, unsigned length,
-                                          uint32_t imm_data, uint16_t lid, unsigned flags);
+const char *
+uct_dc_mlx5_fc_req_str(uct_dc_fc_request_t *dc_req, char *buf, size_t max);
+
+void uct_dc_mlx5_fc_entry_iter_del(uct_dc_mlx5_iface_t *iface, khiter_t it);
 
 void uct_dc_mlx5_destroy_dct(uct_dc_mlx5_iface_t *iface);
 
@@ -290,8 +342,6 @@ void uct_dc_mlx5_iface_init_version(uct_dc_mlx5_iface_t *iface, uct_md_h md);
 
 ucs_status_t uct_dc_mlx5_iface_dci_connect(uct_dc_mlx5_iface_t *iface,
                                            uct_dc_dci_t *dci);
-
-void uct_dc_mlx5_iface_dcis_destroy(uct_dc_mlx5_iface_t *iface, int max);
 
 ucs_status_t uct_dc_mlx5_iface_keepalive_init(uct_dc_mlx5_iface_t *iface);
 
@@ -301,16 +351,11 @@ void uct_dc_mlx5_iface_set_ep_failed(uct_dc_mlx5_iface_t *iface,
                                      uct_ib_mlx5_txwq_t *txwq,
                                      ucs_status_t ep_status);
 
-ucs_status_t
-uct_dc_mlx5_iface_create_dcis(uct_dc_mlx5_iface_t *iface,
-                              const uct_dc_mlx5_iface_config_t *config);
-
 void uct_dc_mlx5_iface_reset_dci(uct_dc_mlx5_iface_t *iface, uint8_t dci_index);
 
 #if HAVE_DEVX
 
-ucs_status_t uct_dc_mlx5_iface_devx_create_dct(uct_dc_mlx5_iface_t *iface,
-                                               int full_handshake);
+ucs_status_t uct_dc_mlx5_iface_devx_create_dct(uct_dc_mlx5_iface_t *iface);
 
 ucs_status_t uct_dc_mlx5_iface_devx_set_srq_dc_params(uct_dc_mlx5_iface_t *iface);
 
@@ -320,8 +365,8 @@ ucs_status_t uct_dc_mlx5_iface_devx_dci_connect(uct_dc_mlx5_iface_t *iface,
 
 #else
 
-static UCS_F_MAYBE_UNUSED ucs_status_t uct_dc_mlx5_iface_devx_create_dct(
-        uct_dc_mlx5_iface_t *iface, int full_handshake)
+static UCS_F_MAYBE_UNUSED ucs_status_t
+uct_dc_mlx5_iface_devx_create_dct(uct_dc_mlx5_iface_t *iface)
 {
     return UCS_ERR_UNSUPPORTED;
 }

@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 * Copyright (c) UT-Battelle, LLC. 2014-2015. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
@@ -159,10 +159,10 @@ typedef struct uct_mm_component {
  * @param _rkey_release Remote key release function.
  * @param _cfg_prefix   Prefix for configuration environment vars.
  */
-#define UCT_MM_COMPONENT_DEFINE(_var, _name, _md_ops, _rkey_unpack, \
-                                _rkey_release, _cfg_prefix) \
+#define UCT_MM_COMPONENT_DEFINE(_name, _md_ops, _rkey_unpack, _rkey_release, \
+                                _cfg_prefix) \
     \
-    static uct_mm_component_t _var = { \
+    static uct_mm_component_t UCT_COMPONENT_NAME(_name) = { \
         .super = { \
             .query_md_resources = uct_mm_query_md_resources, \
             .md_open            = uct_mm_md_open, \
@@ -179,12 +179,13 @@ typedef struct uct_mm_component {
             }, \
             .cm_config          = UCS_CONFIG_EMPTY_GLOBAL_LIST_ENTRY, \
             .tl_list            = UCT_COMPONENT_TL_LIST_INITIALIZER( \
-                                      &(_var).super), \
+                                      &UCT_COMPONENT_NAME(_name).super), \
             .flags              = 0, \
+            .md_vfs_init        = \
+                    (uct_component_md_vfs_init_func_t)ucs_empty_function \
        }, \
        .md_ops                  = (_md_ops) \
-    }; \
-    UCT_COMPONENT_REGISTER(&(_var).super); \
+    };
 
 
 extern ucs_config_field_t uct_mm_md_config_table[];
@@ -196,7 +197,7 @@ ucs_status_t uct_mm_query_md_resources(uct_component_t *component,
 
 ucs_status_t uct_mm_seg_new(void *address, size_t length, uct_mm_seg_t **seg_p);
 
-void uct_mm_md_query(uct_md_h md, uct_md_attr_t *md_attr, int support_alloc);
+void uct_mm_md_query(uct_md_h md, uct_md_attr_t *md_attr, uint64_t max_alloc);
 
 ucs_status_t uct_mm_rkey_ptr(uct_component_t *component, uct_rkey_t rkey,
                              void *handle, uint64_t raddr, void **laddr_p);

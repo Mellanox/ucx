@@ -1,5 +1,5 @@
 /*
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019. ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -64,6 +64,15 @@ typedef struct ucs_config_field {
 } ucs_config_field_t;
 
 
+typedef struct ucs_config_cached_key {
+    char            *key;   /* Cached configuration key */
+    char            *value; /* Cached configuration value */
+    int             used;   /* Whether this configuration was
+                             * applied successfully */
+    ucs_list_link_t list;   /* Element in a list of key/value entries */
+} ucs_config_cached_key_t;
+
+
 typedef struct ucs_ib_port_spec {
     char                     *device_name;
     unsigned                 port_num;
@@ -110,13 +119,22 @@ typedef struct ucs_config_bw_spec {
     }
 
 #define UCS_CONFIG_REGISTER_TABLE(_table, _name, _prefix, _type, _list) \
+    UCS_CONFIG_DECLARE_TABLE(_table, _name, _prefix, _type) \
+    UCS_CONFIG_REGISTER_TABLE_ENTRY(&_table##_config_entry, _list);
+
+#define UCS_CONFIG_DECLARE_TABLE(_table, _name, _prefix, _type) \
     static ucs_config_global_list_entry_t _table##_config_entry = { \
         .table  = _table, \
         .name   = _name, \
         .prefix = _prefix, \
         .size   = sizeof(_type) \
-    }; \
-    UCS_CONFIG_REGISTER_TABLE_ENTRY(&_table##_config_entry, _list);
+    };
+
+#define UCS_CONFIG_ADD_TABLE(_table, _list) \
+    ucs_list_add_tail(_list, &(_table##_config_entry).list)
+
+#define UCS_CONFIG_REMOVE_TABLE(_table) \
+    ucs_list_del(&(_table##_config_entry).list)
 
 extern ucs_list_link_t ucs_config_global_list;
 
@@ -141,6 +159,9 @@ int ucs_config_sscanf_ulong(const char *buf, void *dest, const void *arg);
 int ucs_config_sprintf_ulong(char *buf, size_t max, const void *src, const void *arg);
 ucs_status_t ucs_config_clone_ulong(const void *src, void *dest, const void *arg);
 
+int ucs_config_sscanf_pos_double(const char *buf, void *dest, const void *arg);
+int ucs_config_sprintf_pos_double(char *buf, size_t max, const void *src,
+                                  const void *arg);
 int ucs_config_sscanf_double(const char *buf, void *dest, const void *arg);
 int ucs_config_sprintf_double(char *buf, size_t max, const void *src, const void *arg);
 ucs_status_t ucs_config_clone_double(const void *src, void *dest, const void *arg);
@@ -256,6 +277,11 @@ void ucs_config_help_generic(char *buf, size_t max, const void *arg);
                                     ucs_config_clone_double,     ucs_config_release_nop, \
                                     ucs_config_help_generic,     "floating point number"}
 
+#define UCS_CONFIG_TYPE_POS_DOUBLE {ucs_config_sscanf_pos_double, ucs_config_sprintf_pos_double, \
+                                    ucs_config_clone_double,      ucs_config_release_nop, \
+                                    ucs_config_help_generic, \
+                                    "positive floating point number or \"auto\""}
+
 #define UCS_CONFIG_TYPE_HEX        {ucs_config_sscanf_hex,       ucs_config_sprintf_hex, \
                                     ucs_config_clone_uint,       ucs_config_release_nop, \
                                     ucs_config_help_generic, \
@@ -358,10 +384,11 @@ UCS_CONFIG_DECLARE_ARRAY(string)
 
 
 /**
- * Helpers for Bandwidth units (see UCS_CONFIG_TYPE_BW)
+ * Helpers for positive double and bandwidth units (see UCS_CONFIG_TYPE_BW)
  */
-#define UCS_CONFIG_BW_AUTO            ((double)-2)
-#define UCS_CONFIG_BW_IS_AUTO(_value) ((ssize_t)(_value) == UCS_CONFIG_BW_AUTO)
+#define UCS_CONFIG_DBL_AUTO            ((double)-2)
+#define UCS_CONFIG_DBL_IS_AUTO(_value) ((ssize_t)(_value) == \
+                                        UCS_CONFIG_DBL_AUTO)
 
 
 /**
@@ -376,7 +403,7 @@ ucs_config_parser_set_default_values(void *opts, ucs_config_field_t *fields);
 
 /**
  * Parse INI configuration file with UCX options.
- * 
+ *
  * @param dir_path  Parse file at this location.
  * @param file_name Parse this file.
  * @param override  Whether to override, if another file was previously parsed
@@ -502,7 +529,7 @@ size_t ucs_config_memunits_get(size_t config_size, size_t auto_size,
  * @param config_names     lookup array of counters patterns.
  * @param str              string to search.
  */
-int ucs_config_names_search(ucs_config_names_array_t config_names,
+int ucs_config_names_search(const ucs_config_names_array_t *config_names,
                             const char *str);
 
 END_C_DECLS

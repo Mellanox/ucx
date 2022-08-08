@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2020.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -17,11 +17,55 @@
  * selection decision.
  */
 #define UCP_PROTO_SELECT_OP_ATTR_BASE   UCP_OP_ATTR_FLAG_NO_IMM_CMPL
-#define UCP_PROTO_SELECT_OP_ATTR_MASK   UCP_OP_ATTR_FLAG_FAST_CMPL
+#define UCP_PROTO_SELECT_OP_ATTR_MASK   (UCP_OP_ATTR_FLAG_FAST_CMPL | \
+                                         UCP_OP_ATTR_FLAG_MULTI_SEND)
+#define UCP_PROTO_SELECT_OP_FLAGS_BASE  UCS_BIT(5)
+
+
+/* Select a protocol for sending one fragment of a rendezvous pipeline */
+#define UCP_PROTO_SELECT_OP_FLAG_PPLN_FRAG (UCP_PROTO_SELECT_OP_FLAGS_BASE << 0)
+
+
+/* Select a protocol as part of performance estimation of another protocol,
+   rather for actually sending a request */
+#define UCP_PROTO_SELECT_OP_FLAG_INTERNAL (UCP_PROTO_SELECT_OP_FLAGS_BASE << 1)
+
+
+/* Select eager/rendezvous protocol for Active Message sends */
+#define UCP_PROTO_SELECT_OP_FLAG_AM_EAGER (UCP_PROTO_SELECT_OP_FLAGS_BASE << 2)
+#define UCP_PROTO_SELECT_OP_FLAG_AM_RNDV  (UCP_PROTO_SELECT_OP_FLAGS_BASE << 3)
 
 
 /** Maximal length of ucp_proto_select_param_str() */
 #define UCP_PROTO_SELECT_PARAM_STR_MAX 128
+
+
+/**
+ * Protocol and its private configuration
+ */
+typedef struct {
+    /* Protocol definition */
+    const ucp_proto_t        *proto;
+
+    /* Protocol private configuration space */
+    const void               *priv;
+
+    /* Configured protocol threshold */
+    size_t                   cfg_thresh;
+
+    /* Endpoint configuration index this protocol was selected on */
+    ucp_worker_cfg_index_t   ep_cfg_index;
+
+    /* Remote key configuration index this protocol was selected on (can be
+     * UCP_WORKER_CFG_INDEX_NULL)
+     */
+    ucp_worker_cfg_index_t   rkey_cfg_index;
+
+    /* Copy of protocol selection parameters, used to re-select protocol for
+     * existing in-progress request
+     */
+    ucp_proto_select_param_t select_param;
+} ucp_proto_config_t;
 
 
 /**
@@ -37,12 +81,14 @@ typedef struct {
  * Protocol selection per a particular buffer type and operation
  */
 typedef struct {
-    const ucp_proto_threshold_elem_t *thresholds; /* Array of which protocol to use
-                                                     for different message sizes */
-    const ucp_proto_perf_range_t     *perf_ranges;/* Estimated performance for
-                                                     the selected protocols */
-    void                             *priv_buf;   /* Private configuration area
-                                                     for the selected protocols */
+    /* Array of which protocol to use for different message sizes */
+    const ucp_proto_threshold_elem_t *thresholds;
+
+    /* Estimated performance for the selected protocols */
+    ucp_proto_perf_range_t           *perf_ranges;
+
+    /* Private configuration area for the selected protocols */
+    void                             *priv_buf;
 } ucp_proto_select_elem_t;
 
 
@@ -84,19 +130,10 @@ ucs_status_t ucp_proto_select_init(ucp_proto_select_t *proto_select);
 void ucp_proto_select_cleanup(ucp_proto_select_t *proto_select);
 
 
-void ucp_proto_select_dump(ucp_worker_h worker,
-                           ucp_worker_cfg_index_t ep_cfg_index,
-                           ucp_worker_cfg_index_t rkey_cfg_index,
-                           const ucp_proto_select_t *proto_select,
-                           ucs_string_buffer_t *strb);
+void ucp_proto_select_caps_reset(ucp_proto_caps_t *caps);
 
 
-void ucp_proto_select_dump_short(const ucp_proto_select_short_t *select_short,
-                                 const char *name, ucs_string_buffer_t *strb);
-
-
-void ucp_proto_select_param_str(const ucp_proto_select_param_t *select_param,
-                                ucs_string_buffer_t *strb);
+void ucp_proto_select_caps_cleanup(ucp_proto_caps_t *caps);
 
 
 ucp_proto_select_elem_t *
@@ -122,5 +159,29 @@ ucp_proto_select_short_init(ucp_worker_h worker, ucp_proto_select_t *proto_selec
                             ucp_operation_id_t op_id, uint32_t op_attr_mask,
                             unsigned proto_flags,
                             ucp_proto_select_short_t *proto_short);
+
+
+int ucp_proto_select_get_valid_range(
+        const ucp_proto_threshold_elem_t *thresholds, size_t *min_length_p,
+        size_t *max_length_p);
+
+
+/* Get the protocol selection hash for the endpoint or remote key config */
+ucp_proto_select_t *
+ucp_proto_select_get(ucp_worker_h worker, ucp_worker_cfg_index_t ep_cfg_index,
+                     ucp_worker_cfg_index_t rkey_cfg_index,
+                     ucp_worker_cfg_index_t *new_rkey_cfg_index);
+
+
+void ucp_proto_config_query(ucp_worker_h worker,
+                            const ucp_proto_config_t *proto_config,
+                            size_t msg_length,
+                            ucp_proto_query_attr_t *proto_attr);
+
+
+int ucp_proto_select_elem_query(ucp_worker_h worker,
+                                const ucp_proto_select_elem_t *select_elem,
+                                size_t msg_length,
+                                ucp_proto_query_attr_t *proto_attr);
 
 #endif

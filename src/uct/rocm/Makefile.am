@@ -1,5 +1,5 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2001-2018.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2018. ALL RIGHTS RESERVED.
 # See file LICENSE for terms.
 #
 
@@ -45,6 +45,10 @@ libuct_rocm_la_SOURCES += \
     ipc/rocm_ipc_ep.c \
     ipc/rocm_ipc_cache.c
 
+PKG_CONFIG_NAME=rocm
+
 include $(top_srcdir)/config/module.am
+# TODO: enable pkg-config processing when module static build is enabled
+# include $(top_srcdir)/config/module-pkg-config.am
 
 endif

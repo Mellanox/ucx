@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Mellanox Technologies Ltd. 2019.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -7,9 +7,12 @@
 #ifndef UCS_LINEAR_FUNC_H_
 #define UCS_LINEAR_FUNC_H_
 
-#include <ucs/sys/compiler_def.h>
 #include <ucs/type/status.h>
+#include <ucs/sys/compiler_def.h>
 #include <math.h>
+
+/* The zero function */
+#define UCS_LINEAR_FUNC_ZERO ucs_linear_func_make(0, 0)
 
 
 /**
@@ -68,6 +71,23 @@ static UCS_F_ALWAYS_INLINE ucs_linear_func_t
 ucs_linear_func_add(ucs_linear_func_t func1, ucs_linear_func_t func2)
 {
     return ucs_linear_func_make(func1.c + func2.c, func1.m + func2.m);
+}
+
+
+/**
+ * Sum three linear functions.
+ *
+ * @param [in]  func1    First function to add.
+ * @param [in]  func2    Second function to add.
+ * @param [in]  func3    Third function to add.
+ *
+ * @return Linear function representing (func1 + func2 + func3)
+ */
+static UCS_F_ALWAYS_INLINE ucs_linear_func_t
+ucs_linear_func_add3(ucs_linear_func_t func1, ucs_linear_func_t func2,
+                     ucs_linear_func_t func3)
+{
+    return ucs_linear_func_add(ucs_linear_func_add(func1, func2), func3);
 }
 
 
@@ -170,12 +190,14 @@ ucs_linear_func_add_value_at(ucs_linear_func_t *func,
 }
 
 
-/*
+/**
  * Check if two linear functions are equal.
  *
  * @param [in] func1    First function to compare.
  * @param [in] func2    Second function to compare.
  * @param [in] epsilon  Threshold to consider two floating-point values as equal.
+ *
+ * @return Nonzero if @a func1 is equal to @a func2 within the given threshold.
  */
 static inline int
 ucs_linear_func_is_equal(ucs_linear_func_t func1, ucs_linear_func_t func2,
@@ -183,6 +205,21 @@ ucs_linear_func_is_equal(ucs_linear_func_t func1, ucs_linear_func_t func2,
 {
     return (fabs(func1.m - func2.m) < epsilon) &&
            (fabs(func1.c - func2.c) < epsilon);
+}
+
+
+/**
+ * Check if a linear function is zero.
+ *
+ * @param [in] func     Linear function to check.
+ * @param [in] epsilon  Threshold to consider two floating-point values as equal.
+ *
+ * @return Nonzero if @a func is the zero function within the given threshold.
+ */
+static inline int
+ucs_linear_func_is_zero(ucs_linear_func_t func, double epsilon)
+{
+    return ucs_linear_func_is_equal(func, UCS_LINEAR_FUNC_ZERO, epsilon);
 }
 
 #endif

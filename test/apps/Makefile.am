@@ -1,5 +1,5 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 # Copyright (C) UT-Battelle, LLC. 2015. ALL RIGHTS RESERVED.
 # Copyright (C) ARM Ltd. 2017.  ALL RIGHTS RESERVED.
 #
@@ -8,9 +8,7 @@
 
 SUBDIRS = profiling
 
-if HAVE_GLIBCXX_NOTHROW
 SUBDIRS += iodemo
-endif
 
 if HAVE_CXX11
 SUBDIRS += sockaddr
@@ -18,6 +16,7 @@ endif
 
 noinst_PROGRAMS = \
 	test_ucp_dlopen \
+	test_ucp_config \
 	test_ucs_dlopen \
 	test_link_map \
 	test_dlopen_cfg_print \
@@ -37,6 +36,11 @@ test_ucp_dlopen_CPPFLAGS = $(BASE_CPPFLAGS) \
                            -DLIB_PATH=$(abs_top_builddir)/src/ucp/$(objdir)/libucp.so
 test_ucp_dlopen_CFLAGS   = $(BASE_CFLAGS)
 test_ucp_dlopen_LDADD    = -ldl
+
+test_ucp_config_SOURCES  = test_ucp_config.c
+test_ucp_config_CPPFLAGS = $(BASE_CPPFLAGS)
+test_ucp_config_CFLAGS   = $(BASE_CFLAGS)
+test_ucp_config_LDADD    = $(top_builddir)/src/ucp/libucp.la
 
 test_memtrack_limit_SOURCES  = test_memtrack_limit.c
 test_memtrack_limit_CPPFLAGS = $(BASE_CPPFLAGS)

@@ -1,6 +1,6 @@
 /**
 * Copyright (C) UT-Battelle, LLC. 2015-2017. ALL RIGHTS RESERVED.
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
 
@@ -122,7 +122,7 @@ static UCS_CLASS_CLEANUP_FUNC(uct_ugni_udt_ep_t)
         uct_ugni_cdm_unlock(&iface->super.cdm);
         if (GNI_RC_SUCCESS != ugni_rc) {
             if (GNI_RC_NO_MATCH == ugni_rc) {
-                /* We raced with the async thread, it recieved and cleaned up this reply. It's fine. */
+                /* We raced with the async thread, it received and cleaned up this reply. It's fine. */
                 return;
             }
             ucs_error("GNI_EpPostDataCancel failed, Error status: %s %d",

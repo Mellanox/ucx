@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2018-2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2018-2019. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
 
@@ -14,7 +14,7 @@
 typedef struct uct_cuda_ipc_ep {
     uct_base_ep_t        super;
     pid_t                remote_pid;
-    uct_keepalive_info_t *keepalive; /* keepalive metadata */
+    uct_keepalive_info_t keepalive; /* keepalive metadata */
 } uct_cuda_ipc_ep_t;
 
 

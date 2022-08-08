@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2016.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2016. ALL RIGHTS RESERVED.
 * Copyright (C) Advanced Micro Devices, Inc. 2016 - 2017. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
@@ -47,13 +47,26 @@ void* test_md::alloc_thread(void *arg)
 
     while (!*stop_flag) {
         int count = ucs::rand() % 100;
-        std::vector<void*> buffers;
+        ucs::ptr_vector<void> buffers;
         for (int i = 0; i < count; ++i) {
+            // allocate via malloc(), because ptr_vector<void>::release()
+            // method specialization uses free() to release a memory obtained
+            // for an element
             buffers.push_back(malloc(ucs::rand() % (256 * UCS_KBYTE)));
         }
-        std::for_each(buffers.begin(), buffers.end(), free);
     }
     return NULL;
+}
+
+ucs_status_t test_md::reg_mem(unsigned flags, void *address, size_t length,
+                              uct_mem_h *memh_p)
+{
+    uct_md_mem_reg_params_t reg_params;
+
+    reg_params.field_mask = UCT_MD_MEM_REG_FIELD_FLAGS;
+    reg_params.flags      = flags;
+
+    return uct_md_mem_reg_v2(md(), address, length, &reg_params, memh_p);
 }
 
 std::vector<test_md_param> test_md::enum_mds(const std::string& cmpt_name) {
@@ -79,12 +92,11 @@ test_md::test_md()
                            (void (*)(uct_md_config_t*))uct_config_release,
                            uct_md_config_read, GetParam().component, NULL, NULL);
     memset(&m_md_attr, 0, sizeof(m_md_attr));
+    /* coverity[uninit_member] */
 }
 
 void test_md::init()
 {
-    const std::vector<ucs_memory_type_t>
-        supported_mem_types = mem_buffer::supported_mem_types();
     ucs::test_base::init();
     UCS_TEST_CREATE_HANDLE(uct_md_h, m_md, uct_md_close, uct_md_open,
                            GetParam().component, GetParam().md_name.c_str(),
@@ -337,8 +349,7 @@ UCS_TEST_P(test_md, mem_type_detect_mds) {
                                       slice_length, &mem_attr);
             ASSERT_UCS_OK(status);
             EXPECT_EQ(alloc_mem_type, mem_attr.mem_type);
-            if ((alloc_mem_type == UCS_MEMORY_TYPE_CUDA) ||
-                (alloc_mem_type == UCS_MEMORY_TYPE_CUDA_MANAGED)) {
+            if (alloc_mem_type == UCS_MEMORY_TYPE_CUDA) {
                 EXPECT_EQ(buffer_size, mem_attr.alloc_length);
                 EXPECT_EQ(address, mem_attr.base_address);
             } else {
@@ -349,23 +360,21 @@ UCS_TEST_P(test_md, mem_type_detect_mds) {
         }
 
         /* print memory type and dev name */
-        char sys_dev_name[128];
         mem_attr.field_mask = UCT_MD_MEM_ATTR_FIELD_SYS_DEV;
-
         status = uct_md_mem_query(md(), address, buffer_size, &mem_attr);
         ASSERT_UCS_OK(status);
 
-        ucs_topo_sys_device_bdf_name(mem_attr.sys_dev, sys_dev_name,
-                                     sizeof(sys_dev_name));
+        const char *dev_name = ucs_topo_sys_device_get_name(mem_attr.sys_dev);
         UCS_TEST_MESSAGE << ucs_memory_type_names[alloc_mem_type] << ": "
                          << "sys_dev[" << static_cast<int>(mem_attr.sys_dev)
-                         << "] (" << sys_dev_name << ")";
+                         << "] (" << dev_name << ")";
+
+        free_memory(address, static_cast<ucs_memory_type_t>(alloc_mem_type));
     }
 }
 
 UCS_TEST_P(test_md, mem_query) {
-    for (size_t i = 0; i < mem_buffer::supported_mem_types().size(); ++i) {
-        ucs_memory_type_t mem_type = mem_buffer::supported_mem_types()[i];
+    for (auto mem_type : mem_buffer::supported_mem_types()) {
         if (!(md_attr().cap.detect_mem_types & UCS_BIT(mem_type))) {
             continue;
         }
@@ -383,10 +392,8 @@ UCS_TEST_P(test_md, mem_query) {
             EXPECT_NE(UCS_SYS_DEVICE_ID_UNKNOWN, mem_attr.sys_dev);
         }
 
-        char bdf_buf[32];
         UCS_TEST_MESSAGE << ucs_memory_type_names[mem_type] << ": "
-                         << ucs_topo_sys_device_bdf_name(mem_attr.sys_dev, bdf_buf,
-                                                         sizeof(bdf_buf));
+                         << ucs_topo_sys_device_get_name(mem_attr.sys_dev);
     }
 }
 
@@ -399,12 +406,10 @@ UCS_TEST_P(test_md, sys_device) {
     ASSERT_UCS_OK(status);
 
     for (unsigned i = 0; i < num_tl_resources; ++i) {
-        char bdf_buf[32];
-        const char *bdf_name =
-                ucs_topo_sys_device_bdf_name(tl_resources[i].sys_device, bdf_buf,
-                                             sizeof(bdf_buf));
-        ASSERT_TRUE(bdf_name != NULL);
-        UCS_TEST_MESSAGE << tl_resources[i].dev_name << ": " << bdf_name;
+        const char *sysdev_name = ucs_topo_sys_device_get_name(
+                tl_resources[i].sys_device);
+        ASSERT_TRUE(sysdev_name != NULL);
+        UCS_TEST_MESSAGE << tl_resources[i].dev_name << ": " << sysdev_name;
 
         /* Expect 0 latency and infinite bandwidth within same device */
         ucs_sys_dev_distance_t distance;
@@ -631,48 +636,73 @@ UCS_TEST_P(test_md, sockaddr_accessibility) {
     ASSERT_TRUE(getifaddrs(&ifaddr) != -1);
     /* go through a linked list of available interfaces */
     for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
-        if (ucs::is_inet_addr(ifa->ifa_addr) &&
-            ucs_netif_flags_is_active(ifa->ifa_flags)) {
-            sock_addr.addr = ifa->ifa_addr;
-
-            UCS_TEST_MESSAGE << "Testing " << ifa->ifa_name << " with "
-                             << ucs::sockaddr_to_str(ifa->ifa_addr);
-            ASSERT_FALSE(uct_md_is_sockaddr_accessible(md(), &sock_addr,
-                                                       UCT_SOCKADDR_ACC_LOCAL));
-            ASSERT_FALSE(uct_md_is_sockaddr_accessible(md(), &sock_addr,
-                                                       UCT_SOCKADDR_ACC_REMOTE));
+        if (!ucs::is_interface_usable(ifa)) {
+            continue;
         }
+
+        sock_addr.addr = ifa->ifa_addr;
+        UCS_TEST_MESSAGE << "Testing " << ifa->ifa_name << " with "
+                         << ucs::sockaddr_to_str(ifa->ifa_addr);
+        ASSERT_FALSE(uct_md_is_sockaddr_accessible(md(), &sock_addr,
+                                                   UCT_SOCKADDR_ACC_LOCAL));
+        ASSERT_FALSE(uct_md_is_sockaddr_accessible(md(), &sock_addr,
+                                                   UCT_SOCKADDR_ACC_REMOTE));
     }
     freeifaddrs(ifaddr);
 }
 
 /* This test registers region N times and later deregs it N/2 times and
- * invalidates N/2 times - mix multiple dereg and invalidate calls */
+ * invalidates N/2 times - mix multiple dereg and invalidate calls.
+ * Guarantee that all packed keys are unique. */
 UCS_TEST_SKIP_COND_P(test_md, invalidate, !check_caps(UCT_MD_FLAG_INVALIDATE))
 {
-    static const size_t size = 1 * UCS_MBYTE;
+    static const size_t size       = 1 * UCS_MBYTE;
+    const int limit                = 2000 / ucs::test_time_multiplier();
+    static const unsigned md_flags = UCT_MD_MEM_ACCESS_REMOTE_PUT |
+                                     UCT_MD_MEM_ACCESS_REMOTE_GET;
     std::vector<uct_mem_h> memhs;
+    std::set<uint64_t> keys_set;
     uct_mem_h memh;
     void *ptr;
     size_t mem_reg_count; /* how many mem_reg operations to apply */
     size_t iter;
     ucs_status_t status;
-    uct_md_mem_dereg_params_t params;
+    uct_md_mem_dereg_params_t dereg_params;
+    uct_md_mkey_pack_params_t pack_params;
+    uint64_t key;
 
-    params.field_mask  = UCT_MD_MEM_DEREG_FIELD_FLAGS |
-                         UCT_MD_MEM_DEREG_FIELD_MEMH |
-                         UCT_MD_MEM_DEREG_FIELD_COMPLETION;
-    comp().comp.func   = dereg_cb;
-    comp().comp.status = UCS_OK;
-    comp().self        = this;
-    params.comp        = &comp().comp;
-    ptr                = malloc(size);
-    for (mem_reg_count = 1; mem_reg_count < 100; mem_reg_count++) {
+    if (GetParam().md_name == "cuda_ipc") {
+        UCS_TEST_SKIP_R("test not needed with cuda-ipc");
+    }
+
+    comp().comp.func        = dereg_cb;
+    comp().comp.status      = UCS_OK;
+    comp().self             = this;
+    ptr                     = malloc(size);
+    dereg_params.field_mask = UCT_MD_MEM_DEREG_FIELD_FLAGS |
+                              UCT_MD_MEM_DEREG_FIELD_MEMH |
+                              UCT_MD_MEM_DEREG_FIELD_COMPLETION;
+    dereg_params.comp       = &comp().comp;
+
+    for (mem_reg_count = 1; mem_reg_count < limit; mem_reg_count++) {
         comp().comp.count = (mem_reg_count + 1) / 2;
         m_comp_count = 0;
-        for (iter = 0; iter < mem_reg_count; iter++) {
-            status = uct_md_mem_reg(md(), ptr, size, UCT_MD_MEM_ACCESS_ALL,
-                                    &memh);
+
+        status = reg_mem(md_flags, ptr, size, &memh);
+        ASSERT_UCS_OK(status);
+        memhs.push_back(memh);
+
+        pack_params.field_mask = UCT_MD_MKEY_PACK_FIELD_FLAGS;
+        pack_params.flags      = UCT_MD_MKEY_PACK_FLAG_INVALIDATE;
+        status = uct_md_mkey_pack_v2(md(), memh, &pack_params, &key);
+        ASSERT_UCS_OK(status);
+
+        bool is_unique = keys_set.insert(key).second;
+        ASSERT_TRUE(is_unique) << keys_set.size()
+                               << "-th key is not unique";
+
+        for (iter = 1; iter < mem_reg_count; iter++) {
+            status = reg_mem(md_flags, ptr, size, &memh);
             ASSERT_UCS_OK(status);
             memhs.push_back(memh);
         }
@@ -682,13 +712,13 @@ UCS_TEST_SKIP_COND_P(test_md, invalidate, !check_caps(UCT_MD_FLAG_INVALIDATE))
             ASSERT_EQ(0, m_comp_count);
             memh = memhs.back();
             if ((iter & 1) == 0) { /* on even iteration invalidate handle */
-                params.flags = UCT_MD_MEM_DEREG_FLAG_INVALIDATE;
+                dereg_params.flags = UCT_MD_MEM_DEREG_FLAG_INVALIDATE;
             } else {
-                params.flags = 0;
+                dereg_params.flags = 0;
             }
 
-            params.memh = memh;
-            status      = uct_md_mem_dereg_v2(md(), &params);
+            dereg_params.memh = memh;
+            status            = uct_md_mem_dereg_v2(md(), &dereg_params);
             ASSERT_UCS_OK(status);
             memhs.pop_back();
         }
@@ -700,17 +730,35 @@ UCS_TEST_SKIP_COND_P(test_md, invalidate, !check_caps(UCT_MD_FLAG_INVALIDATE))
     free(ptr);
 }
 
-UCS_TEST_SKIP_COND_P(test_md, dereg_bad_arg,
-                     !check_reg_mem_type(UCS_MEMORY_TYPE_HOST))
+UCS_TEST_SKIP_COND_P(test_md, reg_bad_arg,
+                     !check_reg_mem_type(UCS_MEMORY_TYPE_HOST) ||
+                     !ENABLE_PARAMS_CHECK)
 {
-    static const size_t size = 1 * UCS_MBYTE;
+    uct_mem_h memh;
+    ucs_status_t status;
+
+    status = reg_mem(UCT_MD_MEM_FLAG_HIDE_ERRORS, NULL, 0, &memh);
+    EXPECT_EQ(UCS_ERR_INVALID_PARAM, status);
+
+    status = reg_mem(UCT_MD_MEM_FLAG_HIDE_ERRORS | UCT_MD_MEM_FLAG_FIXED, NULL,
+                     0, &memh);
+    EXPECT_EQ(UCS_ERR_INVALID_PARAM, status);
+}
+
+UCS_TEST_SKIP_COND_P(test_md, dereg_bad_arg,
+                     !check_reg_mem_type(UCS_MEMORY_TYPE_HOST) ||
+                     !ENABLE_PARAMS_CHECK)
+{
+    static const size_t size       = 1 * UCS_MBYTE;
+    static const unsigned md_flags = UCT_MD_MEM_ACCESS_REMOTE_PUT |
+                                     UCT_MD_MEM_ACCESS_REMOTE_GET;
     uct_mem_h memh;
     void *ptr;
     ucs_status_t status;
     uct_md_mem_dereg_params_t params;
 
     ptr    = malloc(size);
-    status = uct_md_mem_reg(md(), ptr, size, UCT_MD_MEM_ACCESS_ALL, &memh);
+    status = reg_mem(md_flags, ptr, size, &memh);
     ASSERT_UCS_OK(status);
 
     comp().comp.func   = dereg_cb;
@@ -726,29 +774,39 @@ UCS_TEST_SKIP_COND_P(test_md, dereg_bad_arg,
                             UCT_MD_MEM_DEREG_FIELD_FLAGS |
                             UCT_MD_MEM_DEREG_FIELD_MEMH;
         status            = uct_md_mem_dereg_v2(md(), &params);
-        EXPECT_EQ(UCS_ERR_UNSUPPORTED, status);
+        ASSERT_UCS_STATUS_EQ(UCS_ERR_UNSUPPORTED, status);
 
         params.field_mask = UCT_MD_MEM_DEREG_FIELD_MEMH;
         status            = uct_md_mem_dereg_v2(md(), &params);
     } else {
         params.field_mask = UCT_MD_MEM_DEREG_FIELD_COMPLETION;
         status            = uct_md_mem_dereg_v2(md(), &params);
-        EXPECT_EQ(UCS_ERR_INVALID_PARAM, status);
+        ASSERT_UCS_STATUS_EQ(UCS_ERR_INVALID_PARAM, status);
 
         params.field_mask = UCT_MD_MEM_DEREG_FIELD_COMPLETION |
                             UCT_MD_MEM_DEREG_FIELD_FLAGS;
         status            = uct_md_mem_dereg_v2(md(), &params);
-        EXPECT_EQ(UCS_ERR_INVALID_PARAM, status);
+        ASSERT_UCS_STATUS_EQ(UCS_ERR_INVALID_PARAM, status);
 
         params.field_mask = UCT_MD_MEM_DEREG_FIELD_MEMH |
                             UCT_MD_MEM_DEREG_FIELD_FLAGS;
         status            = uct_md_mem_dereg_v2(md(), &params);
-        EXPECT_EQ(UCS_ERR_INVALID_PARAM, status);
+        ASSERT_UCS_STATUS_EQ(UCS_ERR_INVALID_PARAM, status);
 
         params.field_mask = UCT_MD_MEM_DEREG_FIELD_MEMH |
                             UCT_MD_MEM_DEREG_FIELD_COMPLETION |
                             UCT_MD_MEM_DEREG_FIELD_FLAGS;
         status            = uct_md_mem_dereg_v2(md(), &params);
+        ASSERT_UCS_STATUS_EQ(UCS_ERR_INVALID_PARAM, status);
+
+        std::vector<uint8_t> rkey(md_attr().rkey_packed_size);
+        uct_md_mkey_pack_params_t pack_params;
+        pack_params.field_mask = UCT_MD_MKEY_PACK_FIELD_FLAGS;
+        pack_params.flags      = UCT_MD_MKEY_PACK_FLAG_INVALIDATE;
+        status = uct_md_mkey_pack_v2(md(), memh, &pack_params, rkey.data());
+        EXPECT_UCS_OK(status);
+
+        status = uct_md_mem_dereg_v2(md(), &params);
     }
 
     EXPECT_UCS_OK(status);

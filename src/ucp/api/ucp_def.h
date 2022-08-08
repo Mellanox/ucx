@@ -1,5 +1,5 @@
 /*
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 * Copyright (C) UT-Battelle, LLC. 2014-2015. ALL RIGHTS RESERVED.
 * Copyright (C) IBM 2015. ALL RIGHTS RESERVED.
 * Copyright (C) Los Alamos National Security, LLC. 2018. ALL RIGHTS RESERVED.
@@ -321,11 +321,12 @@ typedef void (*ucp_send_callback_t)(void *request, ucs_status_t status);
 
  /**
  * @ingroup UCP_COMM
- * @brief Completion callback for non-blocking sends ucp_tag_send_nbx call.
+ * @brief Completion callback for non-blocking sends.
  *
- * This callback routine is invoked whenever the @ref ucp_tag_send_nbx
- * "send operation" is completed. It is important to note that the call-back is
- * only invoked in a case when the operation cannot be completed in place.
+ * This callback routine is invoked whenever the @ref ucp_tag_send_nbx,
+ * @ref ucp_am_send_nbx, @ref ucp_stream_send_nbx, @ref ucp_put_nbx,
+ * @ref ucp_get_nbx, @ref ucp_atomic_op_nbx or any other "send operation" is
+ * completed.
  *
  * @param [in]  request   The completed send request.
  * @param [in]  status    Completion status. If the send operation was completed
@@ -590,7 +591,7 @@ typedef enum ucp_wakeup_event_types {
  *                       to be freed with @ref ucp_am_data_release.
  * @param [in]  length   Length of data.
  * @param [in]  reply_ep If the Active Message is sent with the
- *                       UCP_AM_SEND_REPLY flag, the sending ep
+ *                       UCP_AM_SEND_FLAG_REPLY flag, the sending ep
  *                       will be passed in. If not, NULL will be passed.
  * @param [in]  flags    If this flag is set to UCP_CB_PARAM_FLAG_DATA,
  *                       the callback can return UCS_INPROGRESS and
@@ -624,10 +625,10 @@ typedef ucs_status_t (*ucp_am_callback_t)(void *arg, void *data, size_t length,
  * communication progress.
  *
  * @param [in]  arg           User-defined argument.
- * @param [in]  header        User defined active message header. Can be NULL.
- * @param [in]  header_length Active message header length in bytes. If this
- *                            value is 0, the @a header pointer is undefined
- *                            and should not be accessed.
+ * @param [in]  header        User defined active message header.
+ *                            If @a header_length is 0, this value is undefined
+ *                            and must not be accessed.
+ * @param [in]  header_length Active message header length in bytes. 
  * @param [in]  data          Points to the received data if @a
  *                            UCP_AM_RECV_ATTR_FLAG_RNDV flag is not set in
  *                            @ref ucp_am_recv_param_t.recv_attr. Otherwise
@@ -750,6 +751,16 @@ typedef struct ucp_ep_params {
      * unique name will be created for you.
      */
     const char              *name;
+
+    /**
+     * The sockaddr to bind locally. Specifies the associated network device
+     * to bind locally to establish new connections.
+     * To retrieve the endpoint's local_sockaddr, use @ref ucp_ep_query.
+     * This setting is optional. To enable it, the corresponding - @ref
+     * UCP_EP_PARAM_FIELD_LOCAL_SOCK_ADDR bit in the field mask must be set.
+     */
+    ucs_sock_addr_t         local_sockaddr;
+
 } ucp_ep_params_t;
 
 
@@ -760,5 +771,102 @@ typedef struct ucp_ep_params {
  */
 #define UCP_ENTITY_NAME_MAX 32
 
+/**
+ * @ingroup UCP_ENDPOINT
+ * @brief The @ref ucp_transports_t and @ref ucp_transport_entry_t structures
+ *        are used when @ref ucp_ep_query is called to return an array of
+ *        transport name and device name pairs that are used by an active
+ *        endpoint.
+ *
+ *        The ucp_transport_t structure specifies the characteristics of the
+ *        ucp_transport_entry_t array.
+ *
+ *        The caller is responsible for the allocation and de-allocation
+ *        of the ucp_transport_entry_t array.
+ *
+ * Example: Implementation of a function to query the set of transport and
+ *          device name pairs used by the specified endpoint.
+ *
+ * @code{.c}
+ *   int query_transports(ucp_ep_h ep)
+ *   {
+ *     ucs_status_t status;
+ *     ucp_transport_entry_t *transport_entries;
+ *     ucp_ep_attr_t ep_attrs;
+ *
+ *     ep_attrs.field_mask = UCP_EP_ATTR_FIELD_TRANSPORTS;
+ *     ep_attrs.transports.entries = (ucp_transport_entry_t *)
+ *              malloc(10 * sizeof(ucp_transport_entry_t));
+ *     ep_attrs.transports.num_entries = 10;
+ *     ep_attrs.transports.entry_size = sizeof(ucp_transport_entry_t);
+ *     status = ucp_ep_query(ep, &ep_attrs);
+ *     if (status == UCS_OK) {
+ *         // ep_attrs.transports.num_entries = number of returned entries 
+ *         // ... process transport info ... 
+ *     }
+ *   }
+ * @endcode
+ */
+
+/**
+ * @ingroup UCP_ENDPOINT
+ * @brief A transport name and device name pair used by this endpoint. The
+ * caller is responsible for the allocation and deallocation of an array of
+ * these structures large enough to contain the desired number of transport
+ * and device name pairs.
+ *
+ * Any new fields must be added to the end of this structure.
+ */
+typedef struct {
+    /**
+     * The name of a transport layer used by this endpoint. This '\0'-terminated
+     * string is valid until the endpoint is closed using a
+     * @ref ucp_ep_close_nbx call. 
+     */
+    const char *transport_name;
+
+    /**
+     * The name of the device used with this transport by this endpoint.
+     * This '\0'-terminated string is valid until the endpoint is closed using
+     * a @ref ucp_ep_close_nbx call.
+     */
+    const char *device_name;
+
+} ucp_transport_entry_t;
+
+
+/**
+ * @ingroup UCP_ENDPOINT
+ * @brief Structure containing an array of transport layers and device names
+ * used by an endpoint.
+ *
+ * The caller is responsible for allocation and deallocation of 
+ * this structure.
+ */
+typedef struct {
+    /**
+      * Pointer to array of transport/device name pairs used by this endpoint.
+      * The caller is responsible for the allocation and deallocation of this
+      * array.
+      */
+    ucp_transport_entry_t *entries;
+
+    /**
+     * Number of transport/device name pairs. The caller must set this to
+     * the maximum number of pairs the structure can contain. On return,
+     * this is set to the actual number of transport and device name pairs used
+     * by the endpoint.
+     */
+    unsigned              num_entries;
+
+    /**
+     * Size of a single @ref ucp_transport_entry_t object. The caller sets this
+     * to the size of the ucp_transport_entry_t they are using. UCP code must
+     * not set any fields in the ucp_transport_entry_t structure beyond this
+     * size.
+     */
+    size_t                entry_size;
+
+} ucp_transports_t;
 
 #endif

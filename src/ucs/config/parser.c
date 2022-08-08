@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019. ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -9,6 +9,7 @@
 #endif
 #include "parser.h"
 
+#include <ucs/algorithm/string_distance.h>
 #include <ucs/arch/atomic.h>
 #include <ucs/sys/sys.h>
 #include <ucs/sys/string.h>
@@ -75,22 +76,9 @@ ucs_config_parser_set_value_internal(void *opts, ucs_config_field_t *fields,
                                      const char *name, const char *value,
                                      const char *table_prefix, int recurse);
 
-
-static int __find_string_in_list(const char *str, const char **list)
-{
-    int i;
-
-    for (i = 0; *list; ++list, ++i) {
-        if (strcasecmp(*list, str) == 0) {
-            return i;
-        }
-    }
-    return -1;
-}
-
 int ucs_config_sscanf_string(const char *buf, void *dest, const void *arg)
 {
-    *((char**)dest) = strdup(buf);
+    *((char**)dest) = ucs_strdup(buf, "config_sscanf_string");
     return 1;
 }
 
@@ -103,7 +91,7 @@ int ucs_config_sprintf_string(char *buf, size_t max,
 
 ucs_status_t ucs_config_clone_string(const void *src, void *dest, const void *arg)
 {
-    char *new_str = strdup(*(char**)src);
+    char *new_str = ucs_strdup(*(char**)src, "config_clone_string");
     if (new_str == NULL) {
         return UCS_ERR_NO_MEMORY;
     }
@@ -114,7 +102,7 @@ ucs_status_t ucs_config_clone_string(const void *src, void *dest, const void *ar
 
 void ucs_config_release_string(void *ptr, const void *arg)
 {
-    free(*(char**)ptr);
+    ucs_free(*(char**)ptr);
 }
 
 int ucs_config_sscanf_int(const char *buf, void *dest, const void *arg)
@@ -177,6 +165,29 @@ ucs_status_t ucs_config_clone_ulong(const void *src, void *dest, const void *arg
 {
     *(unsigned long*)dest = *(unsigned long*)src;
     return UCS_OK;
+}
+
+int ucs_config_sscanf_pos_double(const char *buf, void *dest, const void *arg)
+{
+    if (!strcasecmp(buf, UCS_VALUE_AUTO_STR)) {
+        *(double*)dest = UCS_CONFIG_DBL_AUTO;
+        return 1;
+    }
+
+    return ucs_config_sscanf_double(buf, dest, arg) && (*(double*)dest > 0);
+}
+
+int ucs_config_sprintf_pos_double(char *buf, size_t max, const void *src,
+                                  const void *arg)
+{
+    double value = *(double*)src;
+
+    if (UCS_CONFIG_DBL_IS_AUTO(value)) {
+        ucs_strncpy_safe(buf, UCS_VALUE_AUTO_STR, max);
+        return 1;
+    }
+
+    return ucs_config_sprintf_double(buf, max, src, arg);
 }
 
 int ucs_config_sscanf_double(const char *buf, void *dest, const void *arg)
@@ -275,10 +286,12 @@ int ucs_config_sprintf_ternary_auto(char *buf, size_t max,
 
 int ucs_config_sscanf_on_off(const char *buf, void *dest, const void *arg)
 {
-    if (!strcasecmp(buf, "on") || !strcmp(buf, "1")) {
+    if (!strcasecmp(buf, "on") || !strcmp(buf, "1") ||
+        !strcasecmp(buf, "yes") || !strcasecmp(buf, "y")) {
         *(int*)dest = UCS_CONFIG_ON;
         return 1;
-    } else if (!strcasecmp(buf, "off") || !strcmp(buf, "0")) {
+    } else if (!strcasecmp(buf, "off") || !strcmp(buf, "0") ||
+               !strcasecmp(buf, "no") || !strcasecmp(buf, "n")) {
         *(int*)dest = UCS_CONFIG_OFF;
         return 1;
     } else {
@@ -317,7 +330,7 @@ int ucs_config_sscanf_enum(const char *buf, void *dest, const void *arg)
 {
     int i;
 
-    i = __find_string_in_list(buf, (const char**)arg);
+    i = ucs_string_find_in_list(buf, (const char**)arg, 0);
     if (i < 0) {
         return 0;
     }
@@ -366,7 +379,7 @@ ucs_status_t ucs_config_clone_log_comp(const void *src, void *dst, const void *a
 
 int ucs_config_sscanf_bitmap(const char *buf, void *dest, const void *arg)
 {
-    char *str = strdup(buf);
+    char *str = ucs_strdup(buf, "config_sscanf_bitmap_str");
     char *p, *saveptr;
     int ret, i;
 
@@ -378,7 +391,7 @@ int ucs_config_sscanf_bitmap(const char *buf, void *dest, const void *arg)
     *((unsigned*)dest) = 0;
     p = strtok_r(str, ",", &saveptr);
     while (p != NULL) {
-        i = __find_string_in_list(p, (const char**)arg);
+        i = ucs_string_find_in_list(p, (const char**)arg, 0);
         if (i < 0) {
             ret = 0;
             break;
@@ -387,7 +400,7 @@ int ucs_config_sscanf_bitmap(const char *buf, void *dest, const void *arg)
         p = strtok_r(NULL, ",", &saveptr);
     }
 
-    free(str);
+    ucs_free(str);
     return ret;
 }
 
@@ -507,7 +520,7 @@ int ucs_config_sscanf_bw(const char *buf, void *dest, const void *arg)
     int     num_fields;
 
     if (!strcasecmp(buf, UCS_VALUE_AUTO_STR)) {
-        *dst = UCS_CONFIG_BW_AUTO;
+        *dst = UCS_CONFIG_DBL_AUTO;
         return 1;
     }
 
@@ -555,7 +568,7 @@ int ucs_config_sprintf_bw(char *buf, size_t max, const void *src,
     double value                  = *(double*)src;
     const char **suffix;
 
-    if (UCS_CONFIG_BW_IS_AUTO(value)) {
+    if (UCS_CONFIG_DBL_IS_AUTO(value)) {
         ucs_strncpy_safe(buf, UCS_VALUE_AUTO_STR, max);
         return 1;
     }
@@ -693,7 +706,7 @@ int ucs_config_sscanf_range_spec(const char *buf, void *dest, const void *arg)
     char *p, *str;
     int ret = 1;
 
-    str = strdup(buf);
+    str = ucs_strdup(buf, "config_range_spec_str");
     if (str == NULL) {
         return 0;
     }
@@ -722,7 +735,7 @@ int ucs_config_sscanf_range_spec(const char *buf, void *dest, const void *arg)
     range_spec->last = last;
 
 out:
-    free (str);
+    ucs_free(str);
     return ret;
 }
 
@@ -760,7 +773,7 @@ int ucs_config_sscanf_array(const char *buf, void *dest, const void *arg)
     int ret;
     unsigned i;
 
-    str_dup = strdup(buf);
+    str_dup = ucs_strdup(buf, "config_scanf_array");
     if (str_dup == NULL) {
         return 0;
     }
@@ -774,7 +787,7 @@ int ucs_config_sscanf_array(const char *buf, void *dest, const void *arg)
                                  array->parser.arg);
         if (!ret) {
             ucs_free(temp_field);
-            free(str_dup);
+            ucs_free(str_dup);
             return 0;
         }
 
@@ -787,7 +800,7 @@ int ucs_config_sscanf_array(const char *buf, void *dest, const void *arg)
 
     field->data = temp_field;
     field->count = i;
-    free(str_dup);
+    ucs_free(str_dup);
     return 1;
 }
 
@@ -910,7 +923,7 @@ int ucs_config_sprintf_allow_list(char *buf, size_t max, const void *src,
         snprintf(buf, max, UCS_CONFIG_PARSER_ALL);
         return 1;
     }
-    
+
     if (allow_list->mode == UCS_CONFIG_ALLOW_LIST_NEGATE) {
         buf[offset++] = ucs_config_parser_negate;
         max--;
@@ -957,7 +970,7 @@ int ucs_config_sscanf_table(const char *buf, void *dest, const void *arg)
     char *name, *value, *saveptr2;
     ucs_status_t status;
 
-    tokens = strdup(buf);
+    tokens = ucs_strdup(buf, "config_sscanf_table");
     if (tokens == NULL) {
         return 0;
     }
@@ -969,7 +982,7 @@ int ucs_config_sscanf_table(const char *buf, void *dest, const void *arg)
         name  = strtok_r(token, "=", &saveptr2);
         value = strtok_r(NULL,  "=", &saveptr2);
         if (name == NULL || value == NULL) {
-            free(tokens);
+            ucs_free(tokens);
             ucs_error("Could not parse list of values in '%s' (token: '%s')", buf, token);
             return 0;
         }
@@ -983,14 +996,14 @@ int ucs_config_sscanf_table(const char *buf, void *dest, const void *arg)
                 ucs_debug("Failed to set %s to '%s': %s", name, value,
                           ucs_status_string(status));
             }
-            free(tokens);
+            ucs_free(tokens);
             return 0;
         }
 
         token = strtok_r(NULL, ";", &saveptr1);
     }
 
-    free(tokens);
+    ucs_free(tokens);
     return 1;
 }
 
@@ -1040,7 +1053,7 @@ static void ucs_config_print_doc_line_by_line(const ucs_config_field_t *field,
     char *doc, *line, *p;
     int num;
 
-    line = doc = strdup(field->doc);
+    line = doc = ucs_strdup(field->doc, "config_doc");
     p = strchr(line, '\n');
     num = 0;
     while (p != NULL) {
@@ -1051,7 +1064,7 @@ static void ucs_config_print_doc_line_by_line(const ucs_config_field_t *field,
         ++num;
     }
     cb(num, line, arg);
-    free(doc);
+    ucs_free(doc);
 }
 
 static ucs_status_t
@@ -1401,7 +1414,7 @@ ucs_config_apply_config_vars(void *opts, ucs_config_field_t *fields,
 
 /* Find if env_prefix consists of multiple prefixes and returns pointer
  * to rightmost in this case, otherwise returns NULL
- */ 
+ */
 static ucs_status_t ucs_config_parser_get_sub_prefix(const char *env_prefix,
                                                      const char **sub_prefix_p)
 {
@@ -1426,27 +1439,29 @@ static ucs_status_t ucs_config_parser_get_sub_prefix(const char *env_prefix,
 
 void ucs_config_parse_config_files()
 {
-    const char *dir_path;
+    const char *path_p;
+    char path[PATH_MAX];
 
     /* System-wide configuration file */
     ucs_config_parse_config_file(UCX_CONFIG_DIR, UCX_CONFIG_FILE_NAME, 1);
 
     /* Library dir */
-    dir_path = ucs_sys_get_lib_path();
-    if (dir_path != NULL) {
-        ucs_config_parse_config_file(dir_path, "../etc/" UCX_CONFIG_FILE_NAME, 1);
+    path_p = ucs_sys_get_lib_path();
+    if (path_p != NULL) {
+        ucs_strncpy_safe(path, path_p, PATH_MAX);
+        ucs_config_parse_config_file(dirname(path), "../etc/" UCX_CONFIG_FILE_NAME, 1);
     }
 
     /* User home dir */
-    dir_path = getenv("HOME");
-    if (dir_path != NULL) {
-        ucs_config_parse_config_file(dir_path, UCX_CONFIG_FILE_NAME, 1);
+    path_p = getenv("HOME");
+    if (path_p != NULL) {
+        ucs_config_parse_config_file(path_p, UCX_CONFIG_FILE_NAME, 1);
     }
 
     /* Custom directory for UCX configuration */
-    dir_path = getenv("UCX_CONFIG_DIR");
-    if (dir_path != NULL) {
-        ucs_config_parse_config_file(dir_path, UCX_CONFIG_FILE_NAME, 1);
+    path_p = getenv("UCX_CONFIG_DIR");
+    if (path_p != NULL) {
+        ucs_config_parse_config_file(path_p, UCX_CONFIG_FILE_NAME, 1);
     }
 
     /* Current working dir */
@@ -1568,7 +1583,7 @@ ucs_status_t ucs_config_parser_clone_opts(const void *src, void *dst,
                                     (char*)dst + field->offset,
                                     field->parser.arg);
         if (status != UCS_OK) {
-            ucs_error("Failed to clone the filed '%s': %s", field->name,
+            ucs_error("Failed to clone the field '%s': %s", field->name,
                       ucs_status_string(status));
             return status;
         }
@@ -1860,6 +1875,60 @@ void ucs_config_parser_print_all_opts(FILE *stream, const char *prefix,
     }
 }
 
+static void ucs_config_parser_search_similar_variables(
+        const ucs_config_field_t *config_table, const char *env_prefix,
+        const char *table_prefix, const char *unused_var,
+        ucs_string_buffer_t *matches_buffer, size_t max_distance)
+{
+    char var_name[128];
+    const ucs_config_field_t *field;
+
+    for (field = config_table; !ucs_config_field_is_last(field); ++field) {
+        if (ucs_config_is_table_field(field)) {
+            ucs_config_parser_search_similar_variables(field->parser.arg,
+                                                       env_prefix, table_prefix,
+                                                       unused_var,
+                                                       matches_buffer,
+                                                       max_distance);
+        } else {
+            ucs_snprintf_safe(var_name, sizeof(var_name), "%s%s%s", env_prefix,
+                              table_prefix ? table_prefix : "", field->name);
+            if (ucs_string_distance(unused_var, var_name) <= max_distance) {
+                ucs_string_buffer_appendf(matches_buffer, "%s, ", var_name);
+            }
+        }
+    }
+}
+
+static void ucs_config_parser_append_similar_vars_message(
+        const char *env_prefix, const char *unused_var,
+        ucs_string_buffer_t *unused_vars_buffer)
+{
+    const size_t max_fuzzy_distance    = 3;
+    ucs_string_buffer_t matches_buffer = UCS_STRING_BUFFER_INITIALIZER;
+    const ucs_config_global_list_entry_t *entry;
+
+    ucs_list_for_each(entry, &ucs_config_global_list, list) {
+        if ((entry->table == NULL) ||
+            ucs_config_field_is_last(&entry->table[0])) {
+            continue;
+        }
+
+        ucs_config_parser_search_similar_variables(entry->table, env_prefix,
+                                                   entry->prefix, unused_var,
+                                                   &matches_buffer,
+                                                   max_fuzzy_distance);
+    }
+
+    if (ucs_string_buffer_length(&matches_buffer) > 0) {
+        ucs_string_buffer_rtrim(&matches_buffer, ", ");
+        ucs_string_buffer_appendf(unused_vars_buffer, " (maybe: %s?)",
+                                  ucs_string_buffer_cstr(&matches_buffer));
+    }
+
+    ucs_string_buffer_cleanup(&matches_buffer);
+}
+
 static void ucs_config_parser_print_env_vars(const char *prefix)
 {
     int num_unused_vars, num_used_vars;
@@ -1899,7 +1968,10 @@ static void ucs_config_parser_print_env_vars(const char *prefix)
         iter = kh_get(ucs_config_env_vars, &ucs_config_parser_env_vars, var_name);
         if (iter == kh_end(&ucs_config_parser_env_vars)) {
             if (ucs_global_opts.warn_unused_env_vars) {
-                ucs_string_buffer_appendf(&unused_vars_strb, "%s,", var_name);
+                ucs_string_buffer_appendf(&unused_vars_strb, "%s", var_name);
+                ucs_config_parser_append_similar_vars_message(
+                        prefix, var_name, &unused_vars_strb);
+                ucs_string_buffer_appendf(&unused_vars_strb, "; ");
                 ++num_unused_vars;
             }
         } else {
@@ -1913,8 +1985,9 @@ static void ucs_config_parser_print_env_vars(const char *prefix)
     pthread_mutex_unlock(&ucs_config_parser_env_vars_hash_lock);
 
     if (num_unused_vars > 0) {
-        ucs_string_buffer_rtrim(&unused_vars_strb, ",");
-        ucs_warn("unused env variable%s: %s (set %s%s=n to suppress this warning)",
+        ucs_string_buffer_rtrim(&unused_vars_strb, "; ");
+        ucs_warn("unused environment variable%s: %s\n"
+                 "(set %s%s=n to suppress this warning)",
                  (num_unused_vars > 1) ? "s" : "",
                  ucs_string_buffer_cstr(&unused_vars_strb),
                  UCS_DEFAULT_ENV_PREFIX, UCS_GLOBAL_OPTS_WARN_UNUSED_CONFIG);
@@ -1974,14 +2047,14 @@ size_t ucs_config_memunits_get(size_t config_size, size_t auto_size,
     }
 }
 
-int ucs_config_names_search(ucs_config_names_array_t config_names,
+int ucs_config_names_search(const ucs_config_names_array_t *config_names,
                             const char *str)
 {
     unsigned i;
 
-    for (i = 0; i < config_names.count; ++i) {
-        if (!fnmatch(config_names.names[i], str, 0)) {
-           return i;
+    for (i = 0; i < config_names->count; ++i) {
+        if (!fnmatch(config_names->names[i], str, 0)) {
+            return i;
         }
     }
 

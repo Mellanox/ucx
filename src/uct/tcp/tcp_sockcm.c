@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -129,6 +129,33 @@ void uct_tcp_sa_data_handler(int fd, ucs_event_set_types_t events, void *arg)
     }
 }
 
+ucs_status_t uct_tcp_sockcm_ep_query(uct_ep_h ep, uct_ep_attr_t *ep_attr)
+{
+    uct_tcp_sockcm_ep_t *cep = ucs_derived_of(ep, uct_tcp_sockcm_ep_t);
+    ucs_status_t status;
+    socklen_t addr_len;
+
+    if (ep_attr->field_mask & UCT_EP_ATTR_FIELD_LOCAL_SOCKADDR) {
+        status = ucs_socket_getname(cep->fd, &ep_attr->local_address,
+                                    &addr_len);
+        if (status != UCS_OK) {
+            return status;
+        }
+    }
+
+    if (ep_attr->field_mask & UCT_EP_ATTR_FIELD_REMOTE_SOCKADDR) {
+        /* get the device address of the remote peer associated with the
+           connected fd */
+        status = ucs_socket_getpeername(cep->fd, &ep_attr->remote_address,
+                                        &addr_len);
+        if (status != UCS_OK) {
+            return status;
+        }
+    }
+
+    return UCS_OK;
+}
+
 static uct_iface_ops_t uct_tcp_sockcm_iface_ops = {
     .ep_pending_purge         = (uct_ep_pending_purge_func_t)ucs_empty_function,
     .ep_connect               = uct_tcp_sockcm_ep_connect,
@@ -166,6 +193,13 @@ static uct_iface_ops_t uct_tcp_sockcm_iface_ops = {
     .iface_is_reachable       = (uct_iface_is_reachable_func_t)ucs_empty_function_return_zero
 };
 
+static uct_iface_internal_ops_t uct_tcp_sockcm_iface_internal_ops = {
+    .iface_estimate_perf = (uct_iface_estimate_perf_func_t)ucs_empty_function_return_unsupported,
+    .iface_vfs_refresh   = (uct_iface_vfs_refresh_func_t)ucs_empty_function,
+    .ep_query            = uct_tcp_sockcm_ep_query,
+    .ep_invalidate       = (uct_ep_invalidate_func_t)ucs_empty_function_return_unsupported
+};
+
 UCS_CLASS_INIT_FUNC(uct_tcp_sockcm_t, uct_component_h component,
                     uct_worker_h worker, const uct_cm_config_t *config)
 {
@@ -173,8 +207,9 @@ UCS_CLASS_INIT_FUNC(uct_tcp_sockcm_t, uct_component_h component,
                                                         uct_tcp_sockcm_config_t);
 
     UCS_CLASS_CALL_SUPER_INIT(uct_cm_t, &uct_tcp_sockcm_ops,
-                              &uct_tcp_sockcm_iface_ops, worker, component,
-                              config);
+                              &uct_tcp_sockcm_iface_ops,
+                              &uct_tcp_sockcm_iface_internal_ops,
+                              worker, component, config);
 
     self->priv_data_len  = cm_config->priv_data_len +
                                    sizeof(uct_tcp_sockcm_priv_data_hdr_t);

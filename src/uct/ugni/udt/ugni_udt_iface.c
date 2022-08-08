@@ -1,6 +1,6 @@
 /**
  * Copyright (c) UT-Battelle, LLC. 2014-2017. ALL RIGHTS RESERVED.
- * Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -22,7 +22,7 @@ static ucs_config_field_t uct_ugni_udt_iface_config_table[] = {
     ucs_offsetof(uct_ugni_iface_config_t, super),
     UCS_CONFIG_TYPE_TABLE(uct_iface_config_table)},
 
-    UCT_IFACE_MPOOL_CONFIG_FIELDS("UDT", -1, 0, "udt",
+    UCT_IFACE_MPOOL_CONFIG_FIELDS("UDT", -1, 0, 128m, 1.0, "udt",
                                   ucs_offsetof(uct_ugni_iface_config_t, mpool),
                                   "\nAttention: Setting this param with value != -1 is a dangerous thing\n"
                                   "and could cause deadlock or performance degradation."),
@@ -131,7 +131,7 @@ static void *uct_ugni_udt_device_thread(void *arg)
             break;
         }
         iface->events_ready = 1;
-        ucs_trace("Recieved a new datagram");
+        ucs_trace("Received a new datagram");
         ucs_async_pipe_push(&iface->event_pipe);
     }
 
@@ -379,7 +379,8 @@ static ucs_mpool_ops_t uct_ugni_udt_desc_mpool_ops = {
     .chunk_alloc   = ucs_mpool_hugetlb_malloc,
     .chunk_release = ucs_mpool_hugetlb_free,
     .obj_init      = NULL,
-    .obj_cleanup   = NULL
+    .obj_cleanup   = NULL,
+    .obj_str       = NULL
 };
 
 static UCS_CLASS_INIT_FUNC(uct_ugni_udt_iface_t, uct_md_h md, uct_worker_h worker,
@@ -391,6 +392,7 @@ static UCS_CLASS_INIT_FUNC(uct_ugni_udt_iface_t, uct_md_h md, uct_worker_h worke
     uct_ugni_udt_desc_t *desc;
     gni_return_t ugni_rc;
     int rc;
+    ucs_mpool_params_t mp_params;
 
     UCS_CLASS_CALL_SUPER_INIT(uct_ugni_iface_t, md, worker, params,
                               &uct_ugni_udt_iface_ops,
@@ -407,15 +409,14 @@ static UCS_CLASS_INIT_FUNC(uct_ugni_udt_iface_t, uct_md_h md, uct_worker_h worke
         goto exit;
     }
 
-    status = ucs_mpool_init(&self->free_desc,
-                            0,
-                            uct_ugni_udt_get_diff(self) + self->config.udt_seg_size * 2,
-                            uct_ugni_udt_get_diff(self),
-                            UCS_SYS_CACHE_LINE_SIZE,      /* alignment */
-                            128,                          /* grow */
-                            config->mpool.max_bufs,       /* max buffers */
-                            &uct_ugni_udt_desc_mpool_ops,
-                            "UGNI-UDT-DESC");
+    ucs_mpool_params_reset(&mp_params);
+    uct_iface_mpool_config_copy(&mp_params, &config->mpool);
+    mp_params.elem_size       = uct_ugni_udt_get_diff(self) + self->config.udt_seg_size * 2;
+    mp_params.align_offset    = uct_ugni_udt_get_diff(self);
+    mp_params.elems_per_chunk = 128;
+    mp_params.ops             = &uct_ugni_udt_desc_mpool_ops;
+    mp_params.name            = "UGNI-UDT-DESC";
+    status = ucs_mpool_init(&mp_params, &self->free_desc);
 
     if (UCS_OK != status) {
         ucs_error("Mpool creation failed");
@@ -448,7 +449,7 @@ static UCS_CLASS_INIT_FUNC(uct_ugni_udt_iface_t, uct_md_h md, uct_worker_h worke
                                          UCS_EVENT_SET_EVREAD,
                                          uct_ugni_proccess_datagram_pipe,
                                          self, self->super.super.worker->async);
-                                 
+
     if (UCS_OK != status) {
         goto clean_cancel_desc;
     }

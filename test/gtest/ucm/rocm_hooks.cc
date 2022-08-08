@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2017.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2017. ALL RIGHTS RESERVED.
 * Copyright (C) Advanced Micro Devices, Inc. 2019.  ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
@@ -69,7 +69,8 @@ protected:
                                 int expect_mem_type = UCS_MEMORY_TYPE_ROCM)  {
         ASSERT_EQ(ptr, alloc_event.mem_type.address);
         ASSERT_EQ(size, alloc_event.mem_type.size);
-        ASSERT_EQ(expect_mem_type, alloc_event.mem_type.mem_type);
+        EXPECT_TRUE((alloc_event.mem_type.mem_type == expect_mem_type) ||
+                    (alloc_event.mem_type.mem_type == UCS_MEMORY_TYPE_UNKNOWN));
     }
 
     void check_mem_free_events(void *ptr, size_t size,
@@ -147,48 +148,4 @@ UCS_TEST_F(rocm_hooks, test_hipMallocPitch) {
     ret = hipFree(dptr);
     ASSERT_EQ(ret, hipSuccess);
     check_mem_free_events((void *)dptr, 0);
-}
-
-UCS_TEST_F(rocm_hooks, test_hip_Malloc_Free) {
-    hipError_t ret;
-    void *ptr, *ptr1;
-
-    /* small allocation */
-    ret = hipMalloc(&ptr, 64);
-    ASSERT_EQ(ret, hipSuccess);
-    check_mem_alloc_events(ptr, 64);
-
-    ret = hipFree(ptr);
-    ASSERT_EQ(ret, hipSuccess);
-    check_mem_free_events(ptr, 64);
-
-    /* large allocation */
-    ret = hipMalloc(&ptr, (256 * UCS_MBYTE));
-    ASSERT_EQ(ret, hipSuccess);
-    check_mem_alloc_events(ptr, (256 * UCS_MBYTE));
-
-    ret = hipFree(ptr);
-    ASSERT_EQ(ret, hipSuccess);
-    check_mem_free_events(ptr, (256 * UCS_MBYTE));
-
-    /* multiple allocations, rocmfree in reverse order */
-    ret = hipMalloc(&ptr, (1 * UCS_MBYTE));
-    ASSERT_EQ(ret, hipSuccess);
-    check_mem_alloc_events(ptr, (1 * UCS_MBYTE));
-
-    ret = hipMalloc(&ptr1, (1 * UCS_MBYTE));
-    ASSERT_EQ(ret, hipSuccess);
-    check_mem_alloc_events(ptr1, (1 * UCS_MBYTE));
-
-    ret = hipFree(ptr1);
-    ASSERT_EQ(ret, hipSuccess);
-    check_mem_free_events(ptr1, (1 * UCS_MBYTE));
-
-    ret = hipFree(ptr);
-    ASSERT_EQ(ret, hipSuccess);
-    check_mem_free_events(ptr, (1 * UCS_MBYTE));
-
-    /* hipFree with NULL */
-    ret = hipFree(NULL);
-    ASSERT_EQ(ret, hipSuccess);
 }

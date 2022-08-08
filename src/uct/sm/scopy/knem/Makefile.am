@@ -1,5 +1,5 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2001-2018.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2018. ALL RIGHTS RESERVED.
 # See file LICENSE for terms.
 #
 
@@ -22,6 +22,9 @@ libuct_knem_la_SOURCES = \
     knem_iface.c \
     knem_md.c
 
+PKG_CONFIG_NAME=knem
+
 include $(top_srcdir)/config/module.am
+include $(top_srcdir)/config/module-pkg-config.am
 
 endif

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -10,7 +10,7 @@
 #include <ucs/type/status.h>
 
 ucs_status_t ucm_malloc_install(int events);
-
+void ucm_init_malloc_hook();
 void ucm_malloc_state_reset(int default_mmap_thresh, int default_trim_thresh);
 
 #endif

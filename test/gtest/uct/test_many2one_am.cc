@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -103,7 +103,7 @@ public:
 protected:
     volatile uint32_t             m_am_count;
     std::vector<receive_desc_t*>  m_backlog;
-    entity                       *m_receiver;  
+    entity                       *m_receiver;
 };
 
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2020.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -243,6 +243,7 @@ static void vfs_server_recv(int idx)
         vfs_server_context.stop = 1;
         break;
     case UCS_VFS_SOCK_ACTION_MOUNT:
+        /* coverity[path_manipulation_sink] */
         vfs_server_mount(idx, vfs_msg_in.pid);
         break;
     case UCS_VFS_SOCK_ACTION_NOP:

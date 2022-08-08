@@ -1,13 +1,14 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 * Copyright (C) UT-Battelle, LLC. 2014. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
 
 #include <uct/ib/test_ib.h>
-#ifdef HAVE_MLX5_HW
+#ifdef HAVE_MLX5_DV
 extern "C" {
 #include <uct/ib/mlx5/ib_mlx5.h>
+#include <uct/ib/rc/accel/rc_mlx5_common.h>
 }
 #endif
 
@@ -734,7 +735,9 @@ UCS_TEST_F(test_uct_ib_sl_utils, query_ooo_sl_mask) {
     ucs_status_t status;
 
     ib_device_list = ibv_get_device_list(&num_devices);
-    ASSERT_TRUE(ib_device_list != NULL);
+    if (ib_device_list == NULL) {
+        num_devices = 0;
+    }
 
     for (int i = 0; i < num_devices; ++i) {
         const char *dev_name = ibv_get_device_name(ib_device_list[i]);
@@ -742,6 +745,11 @@ UCS_TEST_F(test_uct_ib_sl_utils, query_ooo_sl_mask) {
         uct_ib_mlx5_md_t *ib_mlx5_md;
         uct_ib_device_t *dev;
         uct_md_h md;
+
+        if (!uct_ib_device_is_accessible(ib_device_list[i])) {
+            /* Skip non-existing IB devices */
+            continue;
+        }
 
         status = uct_md_config_read(&uct_ib_component, NULL, NULL, &md_config);
         EXPECT_UCS_OK(status);
@@ -777,11 +785,14 @@ UCS_TEST_F(test_uct_ib_sl_utils, query_ooo_sl_mask) {
         }
 
         uct_ib_md_close(md);
+
 out_md_config_release:
         uct_config_release(md_config);
     }
 
-    ibv_free_device_list(ib_device_list);
+    if (ib_device_list != NULL) {
+        ibv_free_device_list(ib_device_list);
+    }
 }
 #endif
 
@@ -856,29 +867,38 @@ public:
         }
     }
 
-    void check_send_cq(uct_iface_t *iface, size_t val) {
-        uct_ib_iface_t *ib_iface = ucs_derived_of(iface, uct_ib_iface_t);
-        struct ibv_cq  *send_cq = ib_iface->cq[UCT_IB_DIR_TX];
-
-        if (val != send_cq->comp_events_completed) {
-            uint32_t completed_evt = send_cq->comp_events_completed;
-            /* need this call to acknowledge the completion to prevent iface dtor hung*/
-            ibv_ack_cq_events(ib_iface->cq[UCT_IB_DIR_TX], 1);
-            UCS_TEST_ABORT("send_cq->comp_events_completed have to be 1 but the value "
-                           << completed_evt);
+    size_t get_comp_events(const uct_iface_t *iface, const uct_ib_dir_t dir)
+    {
+        uct_ib_iface_t *ib_iface;
+#if HAVE_MLX5_DV
+        uct_rc_mlx5_iface_common_t *rc_mlx5_iface;
+        if (has_transport("dc_mlx5") || has_transport("rc_mlx5")) {
+            rc_mlx5_iface = ucs_derived_of(iface, uct_rc_mlx5_iface_common_t);
+            return rc_mlx5_iface->cq[dir].cq_sn;
         }
+#endif
+        ib_iface = ucs_derived_of(iface, uct_ib_iface_t);
+        return ib_iface->cq[dir]->comp_events_completed;
     }
 
-    void check_recv_cq(uct_iface_t *iface, size_t val) {
+    void ack_cq(const uct_iface_t *iface, const uct_ib_dir_t dir)
+    {
         uct_ib_iface_t *ib_iface = ucs_derived_of(iface, uct_ib_iface_t);
-        struct ibv_cq  *recv_cq = ib_iface->cq[UCT_IB_DIR_RX];
 
-        if (val != recv_cq->comp_events_completed) {
-            uint32_t completed_evt = recv_cq->comp_events_completed;
-            /* need this call to acknowledge the completion to prevent iface dtor hung*/
-            ibv_ack_cq_events(ib_iface->cq[UCT_IB_DIR_RX], 1);
-            UCS_TEST_ABORT("recv_cq->comp_events_completed have to be 1 but the value "
-                           << completed_evt);
+        ibv_ack_cq_events(ib_iface->cq[dir], 1);
+    }
+
+    void check_cq(const uct_iface_t *iface, const uct_ib_dir_t dir,
+                  const size_t value)
+    {
+        size_t completed_events = get_comp_events(iface, dir);
+
+        if (value != completed_events) {
+            /* acknowledge the completion to prevent iface dtor hung */
+            ack_cq(iface, dir);
+            UCS_TEST_ABORT(
+                    "completed_events have to be 1 but the value "
+                    << completed_events);
         }
     }
 
@@ -914,8 +934,8 @@ UCS_TEST_SKIP_COND_P(test_uct_event_ib, tx_cq,
 
     /* check initial state of the fd and [send|recv]_cq */
     EXPECT_FALSE(m_async_event_ctx.wait_for_event(*m_e1, 0));
-    check_send_cq(m_e1->iface(), 0);
-    check_recv_cq(m_e1->iface(), 0);
+    check_cq(m_e1->iface(), UCT_IB_DIR_TX, 0);
+    check_cq(m_e1->iface(), UCT_IB_DIR_RX, 0);
 
     /* send the data */
     send_msg_e1_e2();
@@ -929,8 +949,8 @@ UCS_TEST_SKIP_COND_P(test_uct_event_ib, tx_cq,
     ASSERT_EQ(status, UCS_ERR_BUSY);
 
     /* make sure [send|recv]_cq handled properly */
-    check_send_cq(m_e1->iface(), 1);
-    check_recv_cq(m_e1->iface(), 0);
+    check_cq(m_e1->iface(), UCT_IB_DIR_TX, 1);
+    check_cq(m_e1->iface(), UCT_IB_DIR_RX, 0);
 
     m_e1->flush();
 }
@@ -951,8 +971,8 @@ UCS_TEST_SKIP_COND_P(test_uct_event_ib, txrx_cq,
 
     /* check initial state of the fd and [send|recv]_cq */
     EXPECT_FALSE(m_async_event_ctx.wait_for_event(*m_e1, 0));
-    check_send_cq(m_e1->iface(), 0);
-    check_recv_cq(m_e1->iface(), 0);
+    check_cq(m_e1->iface(), UCT_IB_DIR_TX, 0);
+    check_cq(m_e1->iface(), UCT_IB_DIR_RX, 0);
 
     /* send the data */
     send_msg_e1_e2(msg_count);
@@ -977,8 +997,8 @@ UCS_TEST_SKIP_COND_P(test_uct_event_ib, txrx_cq,
     ASSERT_EQ(UCS_ERR_BUSY, status);
 
     /* make sure [send|recv]_cq handled properly */
-    check_send_cq(m_e1->iface(), 1);
-    check_recv_cq(m_e1->iface(), 1);
+    check_cq(m_e1->iface(), UCT_IB_DIR_TX, 1);
+    check_cq(m_e1->iface(), UCT_IB_DIR_RX, 1);
 
     m_e1->flush();
     m_e2->flush();

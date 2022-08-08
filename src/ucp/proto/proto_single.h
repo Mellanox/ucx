@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2020-2021.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020-2021. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -27,12 +27,23 @@ typedef struct {
 ucs_status_t ucp_proto_single_init(const ucp_proto_single_init_params_t *params);
 
 
-void ucp_proto_single_config_str(size_t min_length, size_t max_length,
-                                 const void *priv, ucs_string_buffer_t *strb);
+ucs_status_t
+ucp_proto_single_init_priv(const ucp_proto_single_init_params_t *params,
+                           ucp_proto_single_priv_t *spriv);
+
+
+void ucp_proto_single_query(const ucp_proto_query_params_t *params,
+                            ucp_proto_query_attr_t *attr);
 
 
 typedef ucs_status_t (*ucp_proto_send_single_cb_t)(
         ucp_request_t *req, const ucp_proto_single_priv_t *spriv,
-        const uct_iov_t *iov);
+        uct_iov_t *iov);
+
+
+typedef ucs_status_t (*ucp_proto_request_zcopy_init_cb_t)(
+        ucp_request_t *req, ucp_md_map_t md_map,
+        uct_completion_callback_t comp_func, unsigned uct_reg_flags,
+        unsigned dt_mask);
 
 #endif

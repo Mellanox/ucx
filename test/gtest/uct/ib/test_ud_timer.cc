@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -26,7 +26,7 @@ public:
         if (packet_count++ < rx_limit) {
             return UCS_OK;
         }
-        else { 
+        else {
             return UCS_ERR_INVALID_PARAM;
         }
     }
@@ -101,7 +101,7 @@ UCS_TEST_SKIP_COND_P(test_ud_timer, txn,
     EXPECT_EQ(N, ucs_frag_list_sn(&ep(m_e2)->rx.ooo_pkts));
 }
 
-UCS_TEST_P(test_ud_timer, ep_destroy, "UD_TIMEOUT=1s") {
+UCS_TEST_P(test_ud_timer, ep_destroy, "UD_LINGER_TIMEOUT=1s") {
     void *ud_ep_tmp GTEST_ATTRIBUTE_UNUSED_;
     connect();
 

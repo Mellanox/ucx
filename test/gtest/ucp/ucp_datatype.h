@@ -1,12 +1,12 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2018.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2018. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
 
 #ifndef TEST_UCP_DATATYPE_H_
 #define TEST_UCP_DATATYPE_H_
 
-#include <common/gtest.h>
+#include <common/googletest/gtest.h>
 
 #include <ucp/api/ucp.h>
 extern "C" {

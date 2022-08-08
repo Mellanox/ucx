@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2013.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2013. ALL RIGHTS RESERVED.
 * Copyright (C) UT-Battelle, LLC. 2014. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
@@ -12,7 +12,6 @@
 #include <ucs/sys/sys.h>
 #include <ucm/api/ucm.h>
 #include "test_helpers.h"
-#include "tap.h"
 
 
 static int ucs_gtest_random_seed = -1;
@@ -60,37 +59,32 @@ int main(int argc, char **argv) {
     // coverity[fun_call_w_exception]: uncaught exceptions cause nonzero exit anyway, so don't warn.
     ::testing::InitGoogleTest(&argc, argv);
 
-    char *str = getenv("GTEST_TAP");
-    int ret;
-
-    /* Append TAP Listener */
-    if (str) {
-        if (0 < strtol(str, NULL, 0)) {
-            testing::TestEventListeners& listeners = testing::UnitTest::GetInstance()->listeners();
-            if (1 == strtol(str, NULL, 0)) {
-                delete listeners.Release(listeners.default_result_printer());
-            }
-            listeners.Append(new tap::TapListener());
-        }
-    }
-
     parse_test_opts(argc, argv);
+
     if (ucs_gtest_random_seed == -1) {
         ucs_gtest_random_seed = time(NULL) % 32768;
     }
+
     UCS_TEST_MESSAGE << "Using random seed of " << ucs_gtest_random_seed;
     srand(ucs_gtest_random_seed);
     if (RUNNING_ON_VALGRIND) {
-        modify_config_for_valgrind("IB_RX_QUEUE_LEN", "512");
-        modify_config_for_valgrind("IB_RX_BUFS_GROW", "512");
-        modify_config_for_valgrind("MM_RX_BUFS_GROW", "128");
+        modify_config_for_valgrind("MM_RX_BUFS_GROW", "32");
+        modify_config_for_valgrind("MM_FIFO_SIZE", "32");
+        modify_config_for_valgrind("IB_ALLOC", "heap");
+        modify_config_for_valgrind("IB_RX_BUFS_GROW", "128");
         modify_config_for_valgrind("IB_TX_QUEUE_LEN", "128");
         modify_config_for_valgrind("IB_TX_BUFS_GROW", "64");
-        modify_config_for_valgrind("RC_TX_CQ_LEN", "256");
+        modify_config_for_valgrind("UD_RX_QUEUE_LEN", "256");
+        modify_config_for_valgrind("UD_RX_QUEUE_LEN_INIT", "16");
+        modify_config_for_valgrind("RC_TX_CQ_LEN", "128");
+        modify_config_for_valgrind("RC_RX_QUEUE_LEN", "128");
+        modify_config_for_valgrind("DC_TX_QUEUE_LEN", "16");
+        modify_config_for_valgrind("DC_MLX5_NUM_DCI", "3");
         modify_config_for_valgrind("CM_TIMEOUT", "600ms");
-        modify_config_for_valgrind("TCP_TX_BUFS_GROW", "512");
-        modify_config_for_valgrind("TCP_RX_BUFS_GROW", "512");
-        modify_config_for_valgrind("TCP_RX_SEG_SIZE", "16k");
+        modify_config_for_valgrind("TCP_TX_BUFS_GROW", "64");
+        modify_config_for_valgrind("TCP_RX_BUFS_GROW", "64");
+        modify_config_for_valgrind("TCP_RX_SEG_SIZE", "8k");
+        modify_config_for_valgrind("RC_RX_SEG_SIZE", "4200");
         ucm_global_opts.enable_malloc_reloc = 1; /* Test reloc hooks with valgrind,
                                                     though it's generally unsafe. */
     }
@@ -100,16 +94,20 @@ int main(int argc, char **argv) {
     /* set gpu context for tests that need it */
     mem_buffer::set_device_context();
 
+    int ret;
     ret = ucs::watchdog_start();
     if (ret != 0) {
+        /* coverity[fun_call_w_exception] */
         ADD_FAILURE() << "Unable to start watchdog - abort";
         return ret;
     }
 
+    /* coverity[fun_call_w_exception] */
     ret = RUN_ALL_TESTS();
 
     ucs::watchdog_stop();
 
+    /* coverity[fun_call_w_exception] */
     ucs::analyze_test_results();
 
     return ret;

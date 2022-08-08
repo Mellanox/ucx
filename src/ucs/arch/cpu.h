@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
 * Copyright (C) ARM Ltd. 2016.  ALL RIGHTS RESERVED.
 * Copyright (C) Shanghai Zhaoxin Semiconductor Co., Ltd. 2020. ALL RIGHTS RESERVED.
 *
@@ -31,6 +31,7 @@ typedef enum ucs_cpu_model {
     UCS_CPU_MODEL_ARM_AARCH64,
     UCS_CPU_MODEL_AMD_NAPLES,
     UCS_CPU_MODEL_AMD_ROME,
+    UCS_CPU_MODEL_AMD_MILAN,
     UCS_CPU_MODEL_ZHAOXIN_ZHANGJIANG,
     UCS_CPU_MODEL_ZHAOXIN_WUDAOKOU,
     UCS_CPU_MODEL_ZHAOXIN_LUJIAZUI,
@@ -120,7 +121,7 @@ void __clear_cache(void* beg, void* end);
  *
  * @param type  Cache type.
  * @param value Filled with the cache size.
- * 
+ *
  * @return Cache size value or 0 if cache is not supported or can't be read.
  */
 size_t ucs_cpu_get_cache_size(ucs_cpu_cache_type_t type);
@@ -144,7 +145,7 @@ static inline void ucs_clear_cache(void *start, void *end)
 
 /**
  * Get memory copy bandwidth.
- * 
+ *
  * @return Memory copy bandwidth estimation based on CPU used.
  */
 double ucs_cpu_get_memcpy_bw();
@@ -152,7 +153,14 @@ double ucs_cpu_get_memcpy_bw();
 
 static inline int ucs_cpu_prefer_relaxed_order()
 {
-    return ucs_arch_get_cpu_vendor() == UCS_CPU_VENDOR_FUJITSU_ARM;
+    ucs_cpu_vendor_t cpu_vendor = ucs_arch_get_cpu_vendor();
+    ucs_cpu_model_t cpu_model   = ucs_arch_get_cpu_model();
+
+    return (cpu_vendor == UCS_CPU_VENDOR_FUJITSU_ARM) ||
+           ((cpu_vendor == UCS_CPU_VENDOR_AMD) &&
+            ((cpu_model == UCS_CPU_MODEL_AMD_NAPLES) ||
+             (cpu_model == UCS_CPU_MODEL_AMD_ROME) ||
+             (cpu_model == UCS_CPU_MODEL_AMD_MILAN)));
 }
 
 

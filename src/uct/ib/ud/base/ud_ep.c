@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -18,6 +18,8 @@
 #include <ucs/debug/memtrack_int.h>
 #include <ucs/debug/log.h>
 #include <ucs/time/time.h>
+#include <ucs/vfs/base/vfs_cb.h>
+#include <ucs/vfs/base/vfs_obj.h>
 
 
 /* Must be less then peer_timeout to avoid false positive errors taking into
@@ -143,10 +145,10 @@ static ucs_status_t uct_ud_ep_free_by_timeout(uct_ud_ep_t *ep,
     ucs_time_t         diff;
 
     diff = ucs_twheel_get_time(&iface->tx.timer) - ep->close_time;
-    if (diff > iface->config.peer_timeout) {
+    if (diff > iface->config.linger_timeout) {
         ucs_debug("ud_ep %p is destroyed after %fs with timeout %fs\n",
                   ep, ucs_time_to_sec(diff),
-                  ucs_time_to_sec(iface->config.peer_timeout));
+                  ucs_time_to_sec(iface->config.linger_timeout));
         ops = ucs_derived_of(iface->super.ops, uct_ud_iface_ops_t);
         ops->ep_free(&ep->super.super);
         return UCS_OK;
@@ -215,6 +217,8 @@ static void uct_ud_ep_purge_outstanding(uct_ud_ep_t *ep)
     uct_ud_ctl_desc_t *cdesc;
     ucs_queue_iter_t iter;
 
+    ucs_trace_func("ep=%p", ep);
+
     ucs_queue_for_each_safe(cdesc, iter, &iface->tx.outstanding_q, queue) {
         if (cdesc->ep == ep) {
             ucs_queue_del_iter(&iface->tx.outstanding_q, iter);
@@ -230,6 +234,8 @@ static void uct_ud_ep_purge(uct_ud_ep_t *ep, ucs_status_t status)
     uct_ud_iface_t *iface = ucs_derived_of(ep->super.super.iface,
                                            uct_ud_iface_t);
 
+    ucs_trace_func("ep=%p", ep);
+
     uct_ud_iface_dispatch_async_comps(iface, ep);
 
     /* reset the maximal TX psn value to the default, since we should be able
@@ -237,6 +243,8 @@ static void uct_ud_ep_purge(uct_ud_ep_t *ep, ucs_status_t status)
      * operation has to return UCS_OK */
     uct_ud_ep_reset_max_psn(ep);
     uct_ud_ep_purge_outstanding(ep);
+    uct_ud_ep_ctl_op_del(ep, ep->tx.pending.ops);
+    ucs_arbiter_group_desched(&iface->tx.pending_q, &ep->tx.pending.group);
     ep->tx.acked_psn = (uct_ud_psn_t)(ep->tx.psn - 1);
     uct_ud_ep_window_release(ep, status, 0);
     ucs_assert(ucs_queue_is_empty(&ep->tx.window));
@@ -248,15 +256,17 @@ static unsigned uct_ud_ep_deferred_timeout_handler(void *arg)
     uct_ud_iface_t *iface = ucs_derived_of(ep->super.super.iface, uct_ud_iface_t);
     ucs_status_t status;
 
+    uct_ud_enter(iface);
+
     if (ep->flags & UCT_UD_EP_FLAG_DISCONNECTED) {
         uct_ud_ep_purge(ep, UCS_ERR_ENDPOINT_TIMEOUT);
-        return 0;
+        goto out;
     }
 
     if (ep->flags & UCT_UD_EP_FLAG_PRIVATE) {
         ucs_assert(ucs_queue_is_empty(&ep->tx.window));
         uct_ep_destroy(&ep->super.super);
-        return 0;
+        goto out;
     }
 
     uct_ud_ep_purge(ep, UCS_ERR_ENDPOINT_TIMEOUT);
@@ -270,6 +280,8 @@ static unsigned uct_ud_ep_deferred_timeout_handler(void *arg)
                   ep, UCT_UD_EP_PEER_NAME_ARG(ep));
     }
 
+out:
+    uct_ud_leave(iface);
     return 1;
 }
 
@@ -287,6 +299,28 @@ static UCS_F_ALWAYS_INLINE int uct_ud_ep_is_last_ack_received(uct_ud_ep_t *ep)
     return UCT_UD_PSN_COMPARE(ep->tx.acked_psn, ==, ep->tx.psn - 1);
 }
 
+static UCS_F_ALWAYS_INLINE void
+uct_ud_ep_assert_tx_window_nonempty(const uct_ud_ep_t *ep)
+{
+    ucs_assertv(!ucs_queue_is_empty(&ep->tx.window),
+                "ep %p: acked_psn=%u current_psn=%u", ep, ep->tx.acked_psn,
+                ep->tx.psn);
+}
+
+static void uct_ud_ep_handle_timeout(uct_ud_ep_t *ep)
+{
+    uct_ud_iface_t *iface = ucs_derived_of(ep->super.super.iface,
+                                           uct_ud_iface_t);
+
+    ucs_callbackq_add_safe(&iface->super.super.worker->super.progress_q,
+                           uct_ud_ep_deferred_timeout_handler, ep,
+                           UCS_CALLBACKQ_FLAG_ONESHOT);
+    if (iface->async.event_cb != NULL) {
+        /* notify user */
+        iface->async.event_cb(iface->async.event_arg, 0);
+    }
+}
+
 static void uct_ud_ep_timer(ucs_wtimer_t *self)
 {
     uct_ud_ep_t    *ep    = ucs_container_of(self, uct_ud_ep_t, timer);
@@ -301,25 +335,13 @@ static void uct_ud_ep_timer(ucs_wtimer_t *self)
         if (ep->flags & UCT_UD_EP_FLAG_DISCONNECTED) {
             status = uct_ud_ep_free_by_timeout(ep, iface);
             if (status == UCS_INPROGRESS) {
-                uct_ud_ep_timer_backoff(ep);
+                goto timer_backoff;
             }
         }
         return;
     }
 
-    ucs_assert(!ucs_queue_is_empty(&ep->tx.window));
-
-    now  = ucs_twheel_get_time(&iface->tx.timer);
-    diff = now - ep->tx.send_time;
-    if (diff > iface->config.peer_timeout) {
-        ucs_debug("ep %p: timeout of %.2f sec, config::peer_timeout - %.2f sec",
-                  ep, ucs_time_to_sec(diff),
-                  ucs_time_to_sec(iface->config.peer_timeout));
-        ucs_callbackq_add_safe(&iface->super.super.worker->super.progress_q,
-                               uct_ud_ep_deferred_timeout_handler, ep,
-                               UCS_CALLBACKQ_FLAG_ONESHOT);
-        return;
-    }
+    uct_ud_ep_assert_tx_window_nonempty(ep);
 
     /* If we are already resending, do not consider this timeout as packet drop.
      * It just means the sender is slow.
@@ -328,11 +350,11 @@ static void uct_ud_ep_timer(ucs_wtimer_t *self)
         (ep->tx.resend_count > 0)) {
         ucs_trace("ep %p: resend still in progress, ops 0x%x tx_count %d",
                   ep, ep->tx.pending.ops, ep->tx.resend_count);
-        uct_ud_ep_timer_backoff(ep);
-        return;
+        goto timer_backoff;
     }
 
     last_send = ucs_max(ep->tx.send_time, ep->tx.resend_time);
+    now       = ucs_twheel_get_time(&iface->tx.timer);
     diff      = now - last_send;
     if (diff > iface->tx.tick) {
         if (diff > 3 * iface->tx.tick) {
@@ -348,6 +370,16 @@ static void uct_ud_ep_timer(ucs_wtimer_t *self)
         }
     }
 
+    diff = now - ep->tx.send_time;
+    if (diff > iface->config.peer_timeout) {
+        ucs_debug("ep %p: timeout of %.2f sec, config::peer_timeout - %.2f sec",
+                  ep, ucs_time_to_sec(diff),
+                  ucs_time_to_sec(iface->config.peer_timeout));
+        uct_ud_ep_handle_timeout(ep);
+        return;
+    }
+
+timer_backoff:
     uct_ud_ep_timer_backoff(ep);
 }
 
@@ -453,15 +485,6 @@ static UCS_CLASS_CLEANUP_FUNC(uct_ud_ep_t)
 
 UCS_CLASS_DEFINE(uct_ud_ep_t, uct_base_ep_t);
 
-void uct_ud_ep_clone(uct_ud_ep_t *old_ep, uct_ud_ep_t *new_ep)
-{
-    uct_ep_t *ep_h = &old_ep->super.super;
-    uct_iface_t *iface_h = ep_h->iface;
-
-    uct_ud_iface_replace_ep(ucs_derived_of(iface_h, uct_ud_iface_t), old_ep, new_ep);
-    memcpy(new_ep, old_ep, sizeof(uct_ud_ep_t));
-}
-
 ucs_status_t uct_ud_ep_get_address(uct_ep_h tl_ep, uct_ep_addr_t *addr)
 {
     uct_ud_ep_t *ep = ucs_derived_of(tl_ep, uct_ud_ep_t);
@@ -494,15 +517,63 @@ static ucs_status_t uct_ud_ep_connect_to_iface(uct_ud_ep_t *ep,
     return UCS_OK;
 }
 
-static ucs_status_t uct_ud_ep_disconnect_from_iface(uct_ep_h tl_ep)
+static ucs_status_t uct_ud_ep_disconnect_from_iface(uct_ud_ep_t *ep)
 {
-    uct_ud_ep_t *ep = ucs_derived_of(tl_ep, uct_ud_ep_t);
-
     ucs_frag_list_cleanup(&ep->rx.ooo_pkts);
     uct_ud_ep_reset(ep);
 
     ep->dest_ep_id = UCT_UD_EP_NULL_ID;
     ep->flags     &= ~UCT_UD_EP_FLAG_CONNECTED;
+
+    return UCS_OK;
+}
+
+ucs_status_t uct_ud_ep_create(const uct_ep_params_t *params, uct_ep_h *ep_p)
+{
+    uct_ud_iface_t *iface;
+    ucs_status_t status;
+
+    ucs_assert(params->field_mask & UCT_EP_PARAM_FIELD_IFACE);
+
+    if (ucs_test_all_flags(params->field_mask, UCT_EP_PARAM_FIELD_DEV_ADDR |
+                                               UCT_EP_PARAM_FIELD_IFACE_ADDR)) {
+        return uct_ud_ep_create_connected_common(params, ep_p);
+    }
+
+    iface  = ucs_derived_of(params->iface, uct_ud_iface_t);
+    status = uct_iface_invoke_ops_func(&iface->super, uct_ud_iface_ops_t,
+                                       ep_new, params, ep_p);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    uct_ud_ep_set_state(ucs_derived_of(*ep_p, uct_ud_ep_t),
+                        UCT_UD_EP_FLAG_CONNECT_TO_EP);
+    return UCS_OK;
+}
+
+static ucs_status_t uct_ud_ep_create_to_iface(uct_ud_iface_t *iface,
+                                              int path_index,
+                                              uct_ud_ep_conn_sn_t conn_sn,
+                                              uct_ud_ep_t **new_ep_p)
+{
+    uct_ep_params_t params = {
+        .field_mask = UCT_EP_PARAM_FIELD_IFACE |
+                      UCT_EP_PARAM_FIELD_PATH_INDEX,
+        .iface      = &iface->super.super.super,
+        .path_index = path_index
+    };
+    uct_ep_h new_ep_h;
+    ucs_status_t status;
+
+    status = uct_iface_invoke_ops_func(&iface->super, uct_ud_iface_ops_t,
+                                       ep_new, &params, &new_ep_h);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    *new_ep_p            = ucs_derived_of(new_ep_h, uct_ud_ep_t);
+    (*new_ep_p)->conn_sn = conn_sn;
 
     return UCS_OK;
 }
@@ -520,54 +591,54 @@ ucs_status_t uct_ud_ep_create_connected_common(const uct_ep_params_t *ep_params,
     void *peer_address;
     uct_ud_send_skb_t *skb;
     uct_ud_ep_conn_sn_t conn_sn;
-    uct_ep_params_t params;
     ucs_status_t status;
     uct_ud_ep_t *ep;
-    uct_ep_h new_ep_h;
 
     uct_ud_enter(iface);
 
     *new_ep_p = NULL;
+    status    = uct_ud_iface_cep_get_conn_sn(iface, ib_addr, if_addr,
+                                             path_index, &conn_sn);
+    if (status != UCS_OK) {
+        goto out;
+    }
 
-    conn_sn = uct_ud_iface_cep_get_conn_sn(iface, ib_addr, if_addr, path_index);
-    ep      = uct_ud_iface_cep_get_ep(iface, ib_addr, if_addr, path_index,
-                                      conn_sn, 1);
+    ep = uct_ud_iface_cep_get_ep(iface, ib_addr, if_addr, path_index,
+                                 conn_sn, 1);
     if (ep != NULL) {
         uct_ud_ep_set_state(ep, UCT_UD_EP_FLAG_CREQ_NOTSENT);
         ep->flags &= ~UCT_UD_EP_FLAG_PRIVATE;
-        status     = UCS_OK;
-        uct_ud_iface_cep_insert_ep(iface, ib_addr, if_addr, path_index,
-                                   conn_sn, ep);
+        status     = uct_ud_iface_cep_insert_ep(iface, ib_addr, if_addr,
+                                                path_index, conn_sn, ep);
+        if (status != UCS_OK) {
+            goto err_ep_disconnect;
+        }
         goto out_set_ep;
     }
 
-    params.field_mask = UCT_EP_PARAM_FIELD_IFACE |
-                        UCT_EP_PARAM_FIELD_PATH_INDEX;
-    params.iface      = &iface->super.super.super;
-    params.path_index = path_index;
-
-    status = uct_ep_create(&params, &new_ep_h);
+    status = uct_ud_ep_create_to_iface(iface, path_index, conn_sn, &ep);
     if (status != UCS_OK) {
         goto out;
     }
-
-    ep          = ucs_derived_of(new_ep_h, uct_ud_ep_t);
-    ep->conn_sn = conn_sn;
 
     status = uct_ud_ep_connect_to_iface(ep, ib_addr, if_addr);
     if (status != UCS_OK) {
-        goto out;
+        goto err_ep_destroy;
     }
 
-    uct_ud_iface_cep_insert_ep(iface, ib_addr, if_addr, path_index, conn_sn, ep);
+    status = uct_ud_iface_cep_insert_ep(iface, ib_addr, if_addr, path_index,
+                                        conn_sn, ep);
+    if (status != UCS_OK) {
+        goto err_ep_disconnect;
+    }
+
     peer_address = uct_iface_invoke_ops_func(&iface->super, uct_ud_iface_ops_t,
                                              ep_get_peer_address, ep);
 
     status = uct_ud_iface_unpack_peer_address(iface, ib_addr, if_addr,
                                               ep->path_index, peer_address);
     if (status != UCS_OK) {
-        uct_ud_ep_disconnect_from_iface(&ep->super.super);
-        goto out;
+        goto err_ep_disconnect;
     }
 
     skb = uct_ud_ep_prepare_creq(ep);
@@ -586,6 +657,12 @@ out_set_ep:
 out:
     uct_ud_leave(iface);
     return status;
+
+err_ep_disconnect:
+    uct_ud_ep_disconnect_from_iface(ep);
+err_ep_destroy:
+    uct_ep_destroy(&ep->super.super);
+    goto out;
 }
 
 ucs_status_t uct_ud_ep_connect_to_ep(uct_ep_h tl_ep,
@@ -634,6 +711,10 @@ uct_ud_ep_process_ack(uct_ud_iface_t *iface, uct_ud_ep_t *ep,
     }
 
     ep->tx.acked_psn = ack_psn;
+    ucs_assertv(UCT_UD_PSN_COMPARE(ep->tx.acked_psn, <, ep->tx.psn),
+                "ep %p: flags=0x%x acked_psn=%u must be smaller than"
+                " current_psn=%u", ep, ep->flags, ep->tx.acked_psn,
+                ep->tx.psn);
 
     uct_ud_ep_window_release_inline(iface, ep, ack_psn, UCS_OK, is_async, 0);
     uct_ud_ep_ca_ack(ep);
@@ -642,7 +723,7 @@ uct_ud_ep_process_ack(uct_ud_iface_t *iface, uct_ud_ep_t *ep,
     ucs_arbiter_group_schedule(&iface->tx.pending_q, &ep->tx.pending.group);
 
     ep->tx.tick      = iface->tx.tick;
-    ep->tx.send_time = uct_ud_iface_get_time(iface);
+    ep->tx.send_time = ucs_get_time();
 }
 
 static inline void uct_ud_ep_rx_put(uct_ud_neth_t *neth, unsigned byte_len)
@@ -655,33 +736,58 @@ static inline void uct_ud_ep_rx_put(uct_ud_neth_t *neth, unsigned byte_len)
             byte_len - sizeof(*neth) - sizeof(*put_hdr));
 }
 
-static uct_ud_ep_t *uct_ud_ep_create_passive(uct_ud_iface_t *iface, uct_ud_ctl_hdr_t *ctl)
+static uct_ud_ep_t *uct_ud_ep_create_passive(uct_ud_iface_t *iface,
+                                             uct_ud_ctl_hdr_t *ctl)
 {
-    uct_ep_params_t params;
     uct_ud_ep_t *ep;
     ucs_status_t status;
-    uct_ep_t *ep_h;
 
     /* create new endpoint */
-    params.field_mask = UCT_EP_PARAM_FIELD_IFACE;
-    params.iface      = &iface->super.super.super;
-    status = uct_ep_create(&params, &ep_h);
-    ucs_assert_always(status == UCS_OK);
-    ep = ucs_derived_of(ep_h, uct_ud_ep_t);
+    status = uct_ud_ep_create_to_iface(iface, ctl->conn_req.path_index,
+                                       ctl->conn_req.conn_sn, &ep);
+    if (status != UCS_OK) {
+        return NULL;
+    }
 
-    status = uct_ep_connect_to_ep(ep_h, (void*)uct_ud_creq_ib_addr(ctl),
+    status = uct_ep_connect_to_ep(&ep->super.super,
+                                  (void*)uct_ud_creq_ib_addr(ctl),
                                   (void*)&ctl->conn_req.ep_addr);
-    ucs_assert_always(status == UCS_OK);
-
-    ep->path_index = ctl->conn_req.path_index;
+    if (status != UCS_OK) {
+        goto err_ep_destroy;
+    }
 
     uct_ud_ep_set_state(ep, UCT_UD_EP_FLAG_PRIVATE);
 
-    ep->conn_sn = ctl->conn_req.conn_sn;
-    uct_ud_iface_cep_insert_ep(iface, uct_ud_creq_ib_addr(ctl),
-                               &ctl->conn_req.ep_addr.iface_addr,
-                               ep->path_index, ctl->conn_req.conn_sn, ep);
+    status = uct_ud_iface_cep_insert_ep(iface, uct_ud_creq_ib_addr(ctl),
+                                        &ctl->conn_req.ep_addr.iface_addr,
+                                        ep->path_index, ctl->conn_req.conn_sn,
+                                        ep);
+    if (status != UCS_OK) {
+        goto err_ep_disconnect;
+    }
+
     return ep;
+
+err_ep_disconnect:
+    uct_ud_ep_disconnect_from_iface(ep);
+err_ep_destroy:
+    uct_ep_destroy(&ep->super.super);
+    return NULL;
+}
+
+static void uct_ud_ep_rx_ctl_drop_packet(uct_ud_ep_t *ep, uct_ud_neth_t *neth,
+                                         uint16_t exp_flags,
+                                         const char *packet_type_str)
+{
+    ucs_trace_data("ep %p: drop %s with psn %u, head_sn %u",
+                   ep, packet_type_str, neth->psn, ep->rx.ooo_pkts.head_sn);\
+    ucs_assertv_always(ep->flags & exp_flags, /* At lease one must be set */
+                       "conn_sn=%d ep_id=%d, dest_ep_id=%d rx_psn=%u"
+                       " neth_psn=%u ep_flags=0x%x exp_ep_flags=0x%x"
+                       " ctl_ops=0x%x rx_creq_count=%d",
+                       ep->conn_sn, ep->ep_id, ep->dest_ep_id,
+                       ep->rx.ooo_pkts.head_sn, neth->psn, ep->flags,
+                       exp_flags, ep->tx.pending.ops, ep->rx_creq_count);
 }
 
 static void uct_ud_ep_rx_creq(uct_ud_iface_t *iface, uct_ud_neth_t *neth)
@@ -697,28 +803,30 @@ static void uct_ud_ep_rx_creq(uct_ud_iface_t *iface, uct_ud_neth_t *neth)
                                  ctl->conn_req.conn_sn, 0);
     if (ep == NULL) {
         ep = uct_ud_ep_create_passive(iface, ctl);
-        ucs_assert_always(ep != NULL);
+        if (ep == NULL) {
+            ucs_diag("iface %p: failed to create the passive endpoint", iface);
+            return;
+        }
+
         ep->rx.ooo_pkts.head_sn = neth->psn;
         uct_ud_peer_copy(&ep->peer, ucs_unaligned_ptr(&ctl->peer));
         uct_ud_ep_ctl_op_add(iface, ep, UCT_UD_EP_OP_CREP);
-    } else {
-        if (ep->dest_ep_id == UCT_UD_EP_NULL_ID) {
-            /* simultaneuous CREQ */
-            uct_ud_ep_set_dest_ep_id(ep, uct_ib_unpack_uint24(ctl->conn_req.ep_addr.ep_id));
-            ep->rx.ooo_pkts.head_sn = neth->psn;
-            uct_ud_peer_copy(&ep->peer, ucs_unaligned_ptr(&ctl->peer));
-            ucs_debug("simultaneuous CREQ ep=%p"
-                      "(iface=%p conn_sn=%d ep_id=%d, dest_ep_id=%d rx_psn=%u)",
-                      ep, iface, ep->conn_sn, ep->ep_id,
-                      ep->dest_ep_id, ep->rx.ooo_pkts.head_sn);
-            if (UCT_UD_PSN_COMPARE(ep->tx.psn, >, UCT_UD_INITIAL_PSN)) {
-                /* our own creq was sent, treat incoming creq as ack and remove our own
-                 * from tx window
-                 */
-                uct_ud_ep_process_ack(iface, ep, UCT_UD_INITIAL_PSN, 0);
-            }
-            uct_ud_ep_ctl_op_add(iface, ep, UCT_UD_EP_OP_CREP);
+    } else if (ep->dest_ep_id == UCT_UD_EP_NULL_ID) {
+        /* simultaneous CREQ */
+        uct_ud_ep_set_dest_ep_id(ep, uct_ib_unpack_uint24(ctl->conn_req.ep_addr.ep_id));
+        ep->rx.ooo_pkts.head_sn = neth->psn;
+        uct_ud_peer_copy(&ep->peer, ucs_unaligned_ptr(&ctl->peer));
+        ucs_debug("simultaneous CREQ ep=%p"
+                  "(iface=%p conn_sn=%d ep_id=%d, dest_ep_id=%d rx_psn=%u)",
+                  ep, iface, ep->conn_sn, ep->ep_id,
+                  ep->dest_ep_id, ep->rx.ooo_pkts.head_sn);
+        if (UCT_UD_PSN_COMPARE(ep->tx.psn, >, UCT_UD_INITIAL_PSN)) {
+            /* our own creq was sent, treat incoming creq as ack and remove our
+             * own from tx window
+             */
+            uct_ud_ep_process_ack(iface, ep, UCT_UD_INITIAL_PSN, 0);
         }
+        uct_ud_ep_ctl_op_add(iface, ep, UCT_UD_EP_OP_CREP);
     }
 
     ++ep->rx_creq_count;
@@ -737,14 +845,25 @@ static void uct_ud_ep_rx_creq(uct_ud_iface_t *iface, uct_ud_neth_t *neth)
                        uct_ib_unpack_uint24(ctl->conn_req.ep_addr.ep_id),
                        ep->dest_ep_id);
 
-    /* creq must always have same psn */
+    /* Discard duplicate CREQ or CREQ after CREP */
+    if (UCT_UD_PSN_COMPARE(neth->psn, <, ep->rx.ooo_pkts.head_sn)) {
+        uct_ud_ep_rx_ctl_drop_packet(ep, neth,
+                                     UCT_UD_EP_FLAG_CREQ_RCVD |
+                                     UCT_UD_EP_FLAG_CREP_RCVD,
+                                     "CREQ");
+        return;
+    }
+
+    /* CREQ must have same psn */
     ucs_assertv_always(ep->rx.ooo_pkts.head_sn == neth->psn,
-                       "iface=%p ep=%p conn_sn=%d ep_id=%d, dest_ep_id=%d rx_psn=%u "
-                       "neth_psn=%u ep_flags=0x%x ctl_ops=0x%x rx_creq_count=%d",
+                       "iface=%p ep=%p conn_sn=%d ep_id=%d, dest_ep_id=%d"
+                       " rx_psn=%u neth_psn=%u ep_flags=0x%x ctl_ops=0x%x"
+                       " rx_creq_count=%d",
                        iface, ep, ep->conn_sn, ep->ep_id, ep->dest_ep_id,
                        ep->rx.ooo_pkts.head_sn, neth->psn, ep->flags,
                        ep->tx.pending.ops, ep->rx_creq_count);
-    /* scedule connection reply op */
+
+    /* Schedule connection reply op */
     UCT_UD_EP_HOOK_CALL_RX(ep, neth, sizeof(*neth) + sizeof(*ctl));
     if (uct_ud_ep_ctl_op_check(ep, UCT_UD_EP_OP_CREQ)) {
         uct_ud_ep_set_state(ep, UCT_UD_EP_FLAG_CREQ_NOTSENT);
@@ -771,6 +890,8 @@ static void uct_ud_ep_rx_ctl(uct_ud_iface_t *iface, uct_ud_ep_t *ep,
 
     /* Discard duplicate CREP */
     if (UCT_UD_PSN_COMPARE(neth->psn, <, ep->rx.ooo_pkts.head_sn)) {
+        uct_ud_ep_rx_ctl_drop_packet(ep, neth, UCT_UD_EP_FLAG_CREP_RCVD,
+                                     "CREP");
         return;
     }
 
@@ -854,18 +975,20 @@ void uct_ud_ep_process_rx(uct_ud_iface_t *iface, uct_ud_neth_t *neth, unsigned b
         /* must be connection request packet */
         uct_ud_ep_rx_creq(iface, neth);
         goto out;
-    } else if (ucs_unlikely(!ucs_ptr_array_lookup(&iface->eps, dest_id, ep) ||
-                            (ep->ep_id != dest_id)))
-    {
-        /* Drop the packet because it is
-         * allowed to do disconnect without flush/barrier. So it
-         * is possible to get packet for the ep that has been destroyed
-         */
-        ucs_trace("RX: failed to find ep %d, dropping packet", dest_id);
+    } else if (ucs_unlikely(!ucs_ptr_array_lookup(&iface->eps, dest_id, ep))) {
+        ucs_trace("iface %p: dropping packet with dest_id %u", iface, dest_id);
+        goto out;
+    } else if (ucs_unlikely(ucs_test_all_flags(
+                                    ep->flags,
+                                    UCT_UD_EP_FLAG_DISCONNECTED |
+                                    UCT_UD_EP_FLAG_CONNECT_TO_EP))) {
+        ucs_trace("ep %p: dropping packet, point-to-point ep was disconencted",
+                  ep);
         goto out;
     }
 
-    ucs_assert(ep->ep_id != UCT_UD_EP_NULL_ID);
+    ucs_assertv(ep->ep_id == dest_id, "ep=%p ep_id=%u dest_id=%u", ep,
+                ep->ep_id, dest_id);
     UCT_UD_EP_HOOK_CALL_RX(ep, neth, byte_len);
 
     uct_ud_ep_process_ack(iface, ep, neth->ack_psn, is_async);
@@ -881,7 +1004,7 @@ void uct_ud_ep_process_rx(uct_ud_iface_t *iface, uct_ud_neth_t *neth, unsigned b
     }
 
     if (ucs_unlikely(!is_am)) {
-        if (neth->packet_type & UCT_UD_PACKET_FLAG_NAK) {
+        if (neth->packet_type & UCT_UD_PACKET_FLAG_NACK) {
             uct_ud_ep_set_state(ep, UCT_UD_EP_FLAG_TX_NACKED);
             goto out;
         }
@@ -932,8 +1055,76 @@ out:
     ucs_mpool_put(skb);
 }
 
+static ucs_status_t
+uct_ud_ep_comp_skb_add(uct_ud_iface_t *iface, uct_ud_ep_t *ep,
+                       uct_completion_t *comp)
+{
+    uct_ud_send_skb_t *skb;
+
+    if (comp == NULL) {
+        return UCS_INPROGRESS;
+    }
+
+    /* If the user requested a callback, allocate a dummy skb which will be
+     * released when the current sequence number is completed.
+     */
+    ucs_assert(comp->count > 0);
+
+    skb = ucs_mpool_get(&iface->tx.mp);
+    if (skb == NULL) {
+        return UCS_ERR_NO_RESOURCE;
+    }
+
+    /* Add dummy skb to the window, which would call user completion
+     * callback when getting ACK.
+     */
+    skb->flags                  = UCT_UD_SEND_SKB_FLAG_COMP;
+    skb->len                    = sizeof(skb->neth[0]);
+    skb->neth->packet_type      = 0;
+    skb->neth->psn              = (uct_ud_psn_t)(ep->tx.psn - 1);
+    uct_ud_neth_set_dest_id(skb->neth, UCT_UD_EP_NULL_ID);
+    uct_ud_comp_desc(skb)->comp = comp;
+
+    if (!ucs_queue_is_empty(&ep->tx.window)) {
+        /* If window non-empty: add to window */
+        skb->flags |= UCT_UD_SEND_SKB_FLAG_ACK_REQ;
+        ucs_queue_push(&ep->tx.window, &skb->queue);
+    } else {
+        /* Otherwise, add the skb after async completions */
+        ucs_assert(ep->tx.resend_count == 0);
+        uct_ud_iface_add_async_comp(iface, ep, skb, UCS_OK);
+    }
+
+    ucs_trace_data("added dummy flush skb %p psn %d user_comp %p", skb,
+                   skb->neth->psn, comp);
+
+    return UCS_INPROGRESS;
+}
+
+static UCS_F_ALWAYS_INLINE void uct_ud_ep_ack_req_do(uct_ud_iface_t *iface,
+                                                     uct_ud_ep_t *ep)
+{
+    /* If we didn't flush the last skb, send an ACK_REQ message.
+     * It will speed up the flush because we will not have to wait until
+     * retransmit is triggered.
+     * Also, prevent from sending more control messages like this after first
+     * time by turning on the flag on the last skb.
+     */
+
+    /* Since the function can be called from the arbiter context it is
+     * impossible to schedule a control operation. So just raise a flag and if
+     * there is no other control send ACK_REQ directly.
+     *
+     * If there is other control arbiter will take care of it.
+     */
+    ep->tx.pending.ops |= UCT_UD_EP_OP_ACK_REQ;
+    if (uct_ud_ep_ctl_op_check_ex(ep, UCT_UD_EP_OP_ACK_REQ)) {
+        uct_ud_ep_do_pending_ctl(ep, iface);
+    }
+}
+
 ucs_status_t uct_ud_ep_flush_nolock(uct_ud_iface_t *iface, uct_ud_ep_t *ep,
-                                    uct_completion_t *comp)
+                                    unsigned flags, uct_completion_t *comp)
 {
     uct_ud_send_skb_t *skb;
 
@@ -959,76 +1150,32 @@ ucs_status_t uct_ud_ep_flush_nolock(uct_ud_iface_t *iface, uct_ud_ep_t *ep,
 
     if (ucs_queue_is_empty(&ep->tx.window) &&
         ucs_queue_is_empty(&iface->tx.async_comp_q)) {
-        /* No outstanding operations */
+        /* TX windows is empty and no outstanding operations */
         ucs_assert(ep->tx.resend_count == 0);
         return UCS_OK;
     }
 
-    /* Expedite acknowledgment on the last skb in the window */
-    if (uct_ud_ep_is_last_ack_received(ep)) {
-        uct_ud_ep_ctl_op_del(ep, UCT_UD_EP_OP_ACK_REQ);
-    } else {
-        ucs_assert(!ucs_queue_is_empty(&ep->tx.window));
+    if (!uct_ud_ep_is_last_ack_received(ep)) {
+        ucs_assert(!(flags & UCT_FLUSH_FLAG_CANCEL));
+        uct_ud_ep_assert_tx_window_nonempty(ep);
         skb = ucs_queue_tail_elem_non_empty(&ep->tx.window, uct_ud_send_skb_t,
                                             queue);
         if (!(skb->flags & UCT_UD_SEND_SKB_FLAG_ACK_REQ)) {
-            /* If we didn't ask for ACK on last skb, send an ACK_REQ message.
-             * It will speed up the flush because we will not have to wait until
-             * retransmit is triggered.
-             * Also, prevent from sending more control messages like this after
-             * first time by turning on the flag on the last skb.
-             */
-
-            /* Since the function can be called from the arbiter context it is
-             * impossible to schedule a control operation. So just raise a
-             * flag and if there is no other control send ACK_REQ directly.
-             *
-             * If there is other control arbiter will take care of it.
-             */
-            ep->tx.pending.ops |= UCT_UD_EP_OP_ACK_REQ;
-            if (uct_ud_ep_ctl_op_check_ex(ep, UCT_UD_EP_OP_ACK_REQ)) {
-                uct_ud_ep_do_pending_ctl(ep, iface);
-            }
-
+            uct_ud_ep_ack_req_do(iface, ep);
             skb->flags |= UCT_UD_SEND_SKB_FLAG_ACK_REQ;
         }
+    } else if (ucs_unlikely(flags & UCT_FLUSH_FLAG_CANCEL)) {
+        /* Don't check ACK_REQ flag on a last SKB in case of flush(CANCEL),
+         * because a CQE of the last sent ACK_REQ could be already received,
+         * but couldn't be ACKed by a peer due to connection failure. So,
+         * sending new ACK_REQ packet could help to get a CQE which will
+         * complete SKBs in TX window, becaue "acked_psn == psn - 1" */
+        uct_ud_ep_ack_req_do(iface, ep);
+    } else {
+        uct_ud_ep_ctl_op_del(ep, UCT_UD_EP_OP_ACK_REQ);
     }
 
-    /* If the user requested a callback, allocate a dummy skb which will be
-     * released when the current sequence number is completed.
-     */
-    if (comp != NULL) {
-        ucs_assert(comp->count > 0);
-
-        skb = ucs_mpool_get(&iface->tx.mp);
-        if (skb == NULL) {
-            return UCS_ERR_NO_RESOURCE;
-        }
-
-        /* Add dummy skb to the window, which would call user completion
-         * callback when getting ACK.
-         */
-        skb->flags                  = UCT_UD_SEND_SKB_FLAG_COMP;
-        skb->len                    = sizeof(skb->neth[0]);
-        skb->neth->packet_type      = 0;
-        skb->neth->psn              = (uct_ud_psn_t)(ep->tx.psn - 1);
-        uct_ud_neth_set_dest_id(skb->neth, UCT_UD_EP_NULL_ID);
-        uct_ud_comp_desc(skb)->comp = comp;
-
-        if (!ucs_queue_is_empty(&ep->tx.window)) {
-            /* If window non-empty: add to window */
-            ucs_queue_push(&ep->tx.window, &skb->queue);
-        } else {
-            /* Otherwise, add the skb after async completions */
-            ucs_assert(ep->tx.resend_count == 0);
-            uct_ud_iface_add_async_comp(iface, ep, skb, UCS_OK);
-        }
-
-        ucs_trace_data("added dummy flush skb %p psn %d user_comp %p", skb,
-                       skb->neth->psn, comp);
-    }
-
-    return UCS_INPROGRESS;
+    return uct_ud_ep_comp_skb_add(iface, ep, comp);
 }
 
 ucs_status_t uct_ud_ep_flush(uct_ep_h ep_h, unsigned flags,
@@ -1039,18 +1186,13 @@ ucs_status_t uct_ud_ep_flush(uct_ep_h ep_h, unsigned flags,
                                            uct_ud_iface_t);
     ucs_status_t status;
 
+    ucs_trace_func("ep=%p", ep);
+
     uct_ud_enter(iface);
 
     if (ucs_unlikely(flags & UCT_FLUSH_FLAG_CANCEL)) {
-        uct_ep_pending_purge(ep_h, NULL, 0);
-        uct_ud_iface_dispatch_async_comps(iface, ep);
-        uct_ud_ep_purge(ep, UCS_ERR_CANCELED);
-        /* FIXME make flush(CANCEL) operation truly non-blocking and wait until
-         * all of the outstanding sends are completed. Without this, zero-copy
-         * sends which are still on the QP could be reported as completed which
-         * can lead to sending corrupt data, or local access error. */
-        status = UCS_OK;
-        goto out;
+        uct_ud_ep_reset_max_psn(ep);
+        ep->tx.acked_psn = (uct_ud_psn_t)(ep->tx.psn - 1);
     }
 
     if (ucs_unlikely(uct_ud_iface_has_pending_async_ev(iface))) {
@@ -1058,9 +1200,10 @@ ucs_status_t uct_ud_ep_flush(uct_ep_h ep_h, unsigned flags,
         goto out;
     }
 
-    status = uct_ud_ep_flush_nolock(iface, ep, comp);
+    status = uct_ud_ep_flush_nolock(iface, ep, flags, comp);
     if (status == UCS_OK) {
         UCT_TL_EP_STAT_FLUSH(&ep->super);
+        ucs_assert(ucs_queue_is_empty(&ep->tx.window));
     } else if (status == UCS_INPROGRESS) {
         UCT_TL_EP_STAT_FLUSH_WAIT(&ep->super);
     }
@@ -1101,7 +1244,7 @@ static uct_ud_send_skb_t *uct_ud_ep_prepare_crep(uct_ud_ep_t *ep)
     ucs_assert_always(ep->dest_ep_id != UCT_UD_EP_NULL_ID);
     ucs_assert_always(ep->ep_id != UCT_UD_EP_NULL_ID);
 
-    /* Check that CREQ is neither sheduled nor waiting for CREP ack */
+    /* Check that CREQ is neither scheduled nor waiting for CREP ack */
     ucs_assertv_always(!uct_ud_ep_ctl_op_check(ep, UCT_UD_EP_OP_CREQ) &&
                        uct_ud_ep_is_last_ack_received(ep),
                        "iface=%p ep=%p conn_sn=%d ep_id=%d, dest_ep_id=%d rx_psn=%u "
@@ -1222,7 +1365,7 @@ static void uct_ud_ep_resend(uct_ud_ep_t *ep)
     skb->flags         = UCT_UD_SEND_SKB_FLAG_CTL_RESEND;
     sent_skb->flags   |= UCT_UD_SEND_SKB_FLAG_RESENDING;
     ep->resend.psn     = sent_skb->neth->psn;
-    ep->tx.resend_time = uct_ud_iface_get_time(iface);
+    ep->tx.resend_time = ucs_get_time();
 
     if (sent_skb->flags & UCT_UD_SEND_SKB_FLAG_ZCOPY) {
         /* copy neth + am header part */
@@ -1287,7 +1430,8 @@ static void uct_ud_ep_resend(uct_ud_ep_t *ep)
 
 static void uct_ud_ep_send_ack(uct_ud_iface_t *iface, uct_ud_ep_t *ep)
 {
-    int ctl_flags = 0;
+    int ctl_flags        = 0;
+    uint32_t packet_type = ep->dest_ep_id;
     uct_ud_ctl_desc_t *cdesc;
     uct_ud_send_skb_t *skb;
 
@@ -1298,7 +1442,20 @@ static void uct_ud_ep_send_ack(uct_ud_iface_t *iface, uct_ud_ep_t *ep)
         goto out;
     }
 
-    if (sizeof(uct_ud_neth_t) <= iface->config.max_inline) {
+    if (uct_ud_ep_ctl_op_check(ep, UCT_UD_EP_OP_ACK_REQ)) {
+        packet_type |= UCT_UD_PACKET_FLAG_ACK_REQ;
+        ctl_flags   |= UCT_UD_IFACE_SEND_CTL_FLAG_SIGNALED;
+        if (ep->tx.tick >= iface->config.min_poke_time) {
+            ctl_flags |= UCT_UD_IFACE_SEND_CTL_FLAG_SOLICITED;
+        }
+    }
+
+    if (uct_ud_ep_ctl_op_check(ep, UCT_UD_EP_OP_NACK)) {
+        packet_type |= UCT_UD_PACKET_FLAG_NACK;
+    }
+
+    if ((sizeof(uct_ud_neth_t) <= iface->config.max_inline) &&
+        !(ctl_flags & UCT_UD_IFACE_SEND_CTL_FLAG_SIGNALED)) {
         skb        = ucs_alloca(sizeof(*skb) + sizeof(uct_ud_neth_t));
         skb->flags = 0;
 #if UCS_ENABLE_ASSERT
@@ -1312,17 +1469,7 @@ static void uct_ud_ep_send_ack(uct_ud_iface_t *iface, uct_ud_ep_t *ep)
     uct_ud_neth_init_data(ep, skb->neth);
     skb->flags             = UCT_UD_SEND_SKB_FLAG_CTL_ACK;
     skb->len               = sizeof(uct_ud_neth_t);
-    skb->neth->packet_type = ep->dest_ep_id;
-    if (uct_ud_ep_ctl_op_check(ep, UCT_UD_EP_OP_ACK_REQ)) {
-        skb->neth->packet_type |= UCT_UD_PACKET_FLAG_ACK_REQ;
-        if (ep->tx.tick >= iface->config.min_poke_time) {
-            ctl_flags |= UCT_UD_IFACE_SEND_CTL_FLAG_SOLICITED;
-        }
-    }
-
-    if (uct_ud_ep_ctl_op_check(ep, UCT_UD_EP_OP_NACK)) {
-        skb->neth->packet_type |= UCT_UD_PACKET_FLAG_NAK;
-    }
+    skb->neth->packet_type = packet_type;
 
     if (ctl_flags & UCT_UD_IFACE_SEND_CTL_FLAG_INLINE) {
         uct_ud_iface_send_ctl(iface, ep, skb, NULL, 0, ctl_flags, 1);
@@ -1333,7 +1480,7 @@ static void uct_ud_ep_send_ack(uct_ud_iface_t *iface, uct_ud_ep_t *ep)
                                                   ctl_flags, 1);
         cdesc->self_skb   = skb;
         cdesc->resent_skb = NULL;
-        cdesc->ep         = NULL;
+        cdesc->ep         = ep;
         uct_ud_iface_add_ctl_desc(iface, cdesc);
     }
 
@@ -1603,6 +1750,8 @@ void uct_ud_ep_pending_purge(uct_ep_h ep_h, uct_pending_purge_callback_t cb,
                                               uct_ud_iface_t);
     uct_purge_cb_args_t args = {cb, arg};
 
+    ucs_trace_func("ep=%p", ep);
+
     uct_ud_enter(iface);
     ucs_arbiter_group_purge(&iface->tx.pending_q, &ep->tx.pending.group,
                             uct_ud_ep_pending_purge_cb, &args);
@@ -1624,10 +1773,11 @@ void uct_ud_ep_disconnect(uct_ep_h tl_ep)
     /* cancel user pending */
     uct_ud_ep_pending_purge(tl_ep, NULL, NULL);
 
-    /* schedule flush */
-    uct_ud_ep_flush(tl_ep, 0, NULL);
+    /* schedule flush(CANCEL) */
+    uct_ud_ep_flush(tl_ep, UCT_FLUSH_FLAG_CANCEL, NULL);
 
-    /* cancel user outstanding operations */
+    /* cancel user outstanding operations and possible scheduled flush(CANCEL)
+     * to not invoke user callbacks for the endpoint which was destroyed */
     uct_ud_ep_purge(ep, UCS_ERR_CANCELED);
 
     /* the EP will be destroyed by interface destroy or timeout in
@@ -1639,4 +1789,58 @@ void uct_ud_ep_disconnect(uct_ep_h tl_ep)
                    UCT_UD_SLOW_TIMER_MAX_TICK(iface));
 
     uct_ud_leave(iface);
+}
+
+ucs_status_t uct_ud_ep_invalidate(uct_ep_h tl_ep, unsigned flags)
+{
+    uct_ud_ep_t *ep       = ucs_derived_of(tl_ep, uct_ud_ep_t);
+    uct_ud_iface_t *iface = ucs_derived_of(ep->super.super.iface,
+                                           uct_ud_iface_t);
+
+    uct_ud_enter(iface);
+    uct_ud_ep_handle_timeout(ep);
+    uct_ud_leave(iface);
+    return UCS_OK;
+}
+
+void uct_ud_ep_vfs_populate(uct_ud_ep_t *ep)
+{
+    uct_ud_iface_t *iface = ucs_derived_of(ep->super.super.iface,
+                                           uct_ud_iface_t);
+
+    UCS_STATIC_ASSERT(sizeof(uct_ud_psn_t) == sizeof(uint16_t));
+
+    ucs_vfs_obj_add_dir(iface, ep, "ep/%p", ep);
+
+    ucs_vfs_obj_add_ro_file(ep, ucs_vfs_show_primitive, &ep->ep_id,
+                            UCS_VFS_TYPE_U32, "ep_id");
+    ucs_vfs_obj_add_ro_file(ep, ucs_vfs_show_primitive, &ep->dest_ep_id,
+                            UCS_VFS_TYPE_U32, "dest_ep_id");
+    ucs_vfs_obj_add_ro_file(ep, ucs_vfs_show_primitive, &ep->flags,
+                            UCS_VFS_TYPE_U16 | UCS_VFS_TYPE_FLAG_HEX, "flags");
+
+    ucs_vfs_obj_add_ro_file(ep, ucs_vfs_show_primitive, &ep->tx.psn,
+                            UCS_VFS_TYPE_U16, "tx/psn");
+    ucs_vfs_obj_add_ro_file(ep, ucs_vfs_show_primitive, &ep->tx.max_psn,
+                            UCS_VFS_TYPE_U16, "tx/max_psn");
+    ucs_vfs_obj_add_ro_file(ep, ucs_vfs_show_primitive, &ep->tx.acked_psn,
+                            UCS_VFS_TYPE_U16, "tx/acked_psn");
+    ucs_vfs_obj_add_ro_file(ep, ucs_vfs_show_primitive, &ep->tx.pending.ops,
+                            UCS_VFS_TYPE_U32_HEX, "tx/pending_ops");
+
+    ucs_vfs_obj_add_ro_file(ep, ucs_vfs_show_primitive,
+                            &ep->rx.ooo_pkts.head_sn, UCS_VFS_TYPE_U16,
+                            "rx/ooo_pkts_sn");
+    ucs_vfs_obj_add_ro_file(ep, ucs_vfs_show_primitive, &ep->rx.acked_psn,
+                            UCS_VFS_TYPE_U16, "rx/acked_psn");
+
+    ucs_vfs_obj_add_ro_file(ep, ucs_vfs_show_primitive, &ep->ca.wmax,
+                            UCS_VFS_TYPE_U16, "ca/wmax");
+    ucs_vfs_obj_add_ro_file(ep, ucs_vfs_show_primitive, &ep->ca.cwnd,
+                            UCS_VFS_TYPE_U16, "ca/cwnd");
+
+    ucs_vfs_obj_add_ro_file(ep, ucs_vfs_show_primitive, &ep->resend.psn,
+                            UCS_VFS_TYPE_U16, "resend/psn");
+    ucs_vfs_obj_add_ro_file(ep, ucs_vfs_show_primitive, &ep->resend.max_psn,
+                            UCS_VFS_TYPE_U16, "resend/max_psn");
 }

@@ -1,10 +1,11 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 # Copyright (C) UT-Battelle, LLC. 2015. ALL RIGHTS RESERVED.
 # Copyright (C) The University of Tennessee and the University of Tennessee Research Foundation. 2016. ALL RIGHTS RESERVED.
 # Copyright (C) Los Alamos National Security, LLC. 2018 ALL RIGHTS RESERVED.
 # Copyright (C) Advanced Micro Devices, Inc. 2019. ALL RIGHTS RESERVED.
 # Copyright (C) ARM Ltd. 2020.  ALL RIGHTS RESERVED.
+# Copyright (C) NextSilicon Ltd. 2021.  ALL RIGHTS RESERVED.
 #
 # See file LICENSE for terms.
 #
@@ -20,7 +21,7 @@ GTEST_EXTRA_ARGS         ?=
 LAUNCHER                 ?=
 VALGRIND_EXTRA_ARGS      ?=
 
-SUBDIRS = ucs/test_module ucm/test_dlopen
+SUBDIRS = ucs/test_module ucm/test_dlopen common/googletest
 
 export UCX_HANDLE_ERRORS
 export UCX_LOG_LEVEL
@@ -43,6 +44,10 @@ VALGRIND_ARGS = \
 
 noinst_PROGRAMS = gtest
 
+EXTRA_DIST = \
+	ucs/ucx.conf \
+	ucs/ucx_test.conf
+
 gtestdir  = $(includedir)
 gtest_LDADD = \
 	$(top_builddir)/src/ucs/libucs.la \
@@ -51,6 +56,7 @@ gtest_LDADD = \
 	$(top_builddir)/src/ucm/libucm.la \
 	$(top_builddir)/src/ucp/libucp.la \
 	$(top_builddir)/src/tools/perf/lib/libucxperf.la \
+	common/googletest/libgtest.la \
 	$(OPENMP_CFLAGS) \
 	$(GTEST_LIBS)
 
@@ -65,14 +71,13 @@ gtest_CPPFLAGS = \
 	$(GTEST_CPPFLAGS) \
 	$(OPENMP_CFLAGS)
 
-gtest_LDFLAGS  = $(GTEST_LDFLAGS) -no-install -Wl,-dynamic-list-data
+gtest_LDFLAGS  = $(GTEST_LDFLAGS) -no-install $(LDFLAGS_DYNAMIC_LIST_DATA)
 gtest_CFLAGS   = $(BASE_CFLAGS)
 gtest_CXXFLAGS = \
-	$(BASE_CXXFLAGS) $(GTEST_CXXFLAGS) \
+	$(BASE_CXXFLAGS) $(GTEST_CXXFLAGS) -std=c++11 \
 	-DGTEST_UCM_HOOK_LIB_DIR="\"${abs_builddir}/ucm/test_dlopen/.libs\""
 
 gtest_SOURCES = \
-	common/gtest-all.cc \
 	common/main.cc \
 	common/test_gtest_cmn.cc \
 	common/mem_buffer.cc \
@@ -114,6 +119,7 @@ gtest_SOURCES = \
 	ucs/test_event_set.cc \
 	ucs/test_stats_filter.cc \
 	uct/test_peer_failure.cc \
+	uct/test_sockaddr.cc \
 	uct/test_tag.cc \
 	uct/tcp/test_tcp.cc \
 	\
@@ -165,9 +171,11 @@ gtest_SOURCES = \
 	ucs/test_math.cc \
 	ucs/test_mpmc.cc \
 	ucs/test_mpool.cc \
+	ucs/test_mpool_set.cc \
 	ucs/test_pgtable.cc \
 	ucs/test_profile.cc \
 	ucs/test_rcache.cc \
+	ucs/test_khash.cc \
 	ucs/test_memtype_cache.cc \
 	ucs/test_stats.cc \
 	ucs/test_strided_alloc.cc \
@@ -217,9 +225,9 @@ if HAVE_TL_DC
 gtest_SOURCES += \
 	uct/ib/test_dc.cc
 endif
-if HAVE_RDMACM
+if HAVE_MLX5_DV
 gtest_SOURCES += \
-	uct/ib/test_sockaddr.cc
+	uct/ib/test_cqe_zipping.cc
 endif
 endif # HAVE_IB
 
@@ -251,12 +259,10 @@ endif
 endif
 
 noinst_HEADERS = \
-	common/gtest.h \
 	common/mem_buffer.h \
 	common/test.h \
 	common/test_helpers.h \
 	common/test_perf.h \
-	common/tap.h \
 	\
 	uct/ib/test_rc.h \
 	uct/ib/ud_base.h \

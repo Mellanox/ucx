@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2017.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2017. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -197,7 +197,7 @@ char *ucs_strtrim(char *str);
  * modify source string.
  *
  * @param path Path to parse.
- * 
+ *
  * @return file name
  */
 static UCS_F_ALWAYS_INLINE const char* ucs_basename(const char *path)
@@ -219,7 +219,7 @@ static UCS_F_ALWAYS_INLINE const char* ucs_basename(const char *path)
  *                 '\0' byte.
  * @param per_line Number of bytes in source array to print per line
  *                 or SIZE_MAX for single line.
- * 
+ *
  * @return address of destination buffer
  */
 const char *ucs_str_dump_hex(const void* data, size_t length, char *buf,
@@ -241,7 +241,7 @@ const char* ucs_flags_str(char *str, size_t max,
 
 
 /**
- * Find the number of occurences of a char in the given string.
+ * Find the number of occurrences of a char in the given string.
  *
  * @param  str String buffer to search.
  * @param  c   Character to search in the string.
@@ -262,19 +262,35 @@ size_t ucs_string_count_char(const char *str, char c);
 size_t ucs_string_common_prefix_len(const char *str1, const char *str2);
 
 
+/*
+ * Return the common parent directory, without the trailing slash.
+ * For example, for /sys/ab12 and /sys/ab23 return /sys
+ *
+ * @param  path1        String pointing to first path.
+ * @param  path2        String pointing to second path.
+ * @param  common_path  Buffer to hold the common parent path. The size of the
+ *                      buffer must be large enough to hold the longest common
+ *                      parent path, plus a '\0' terminator.
+ * */
+void ucs_path_get_common_parent(const char *path1, const char *path2,
+                                char *common_path);
+
+
 /**
- * Get number of segments that are disimilar in the two paths. Segments
- * are separated by `/`. When the number of segments are unequal for the given
- * paths, the number of segments different in the larger of the paths is
- * returned. E.g. for /a/b/c/d and /a/x/y 3 is returned; for /a/b/c/d and
- * /a/b/c/e 1 is returned; for /a/b/c and /a/b/c 0 is returned
+ * Get total number of segments that are different in the two paths. Segments
+ * are separated by `/`. For example:
+ *
+ * path1       path2       result
+ * -------------------------------
+ * /a/b/c/d    /a/x/y       4
+ * /a/b/c/d    /a/b/c/e     2
+ * /a/b/c      /a/b/c       0
+ * /a/b/c      /a/b/c/d     1
  *
  * @param  path1  String pointing to first path
  * @param  path2  String pointing to second path
- *
- * @return if either of the paths are invalid UINT_MAX is returned.
  */
-ssize_t ucs_path_calc_distance(const char *path1, const char *path2);
+size_t ucs_path_calc_distance(const char *path1, const char *path2);
 
 
 /**
@@ -288,9 +304,52 @@ ssize_t ucs_path_calc_distance(const char *path1, const char *path2);
 const char* ucs_mask_str(uint64_t mask, ucs_string_buffer_t *strb);
 
 
+/**
+ * Find a string in a NULL-terminated array of strings.
+ *
+ * @param str          String to search for.
+ * @param string_list  NULL-terminated array of strings.
+ * @param case_sensitive Whether to perform case sensitive search.
+ *
+ * @return Index of the string in the array, or -1 if not found.
+ */
+ssize_t ucs_string_find_in_list(const char *str, const char **string_list,
+                                int case_sensitive);
+
+
+/**
+ * Split a string to tokens. The given string is modified in-place.
+ * If the number of tokens is less than than count, the remaining variables
+ * are set to NULL.
+ *
+ * @param str     String to split
+ * @param delim   Delimiters to split by.
+ * @param count   Split to this number of tokens.
+ * @param ...     Variable argument list of pointers to strings (char **) that
+ *                will be filled with the tokens. The number of variables must
+ *                be equal to count.
+ *
+ * @return If the number of tokens in the string is grater than 'count', the
+           function returns the remainder. Otherwise, it returns NULL.
+ */
+char* ucs_string_split(char *str, const char *delim, int count, ...);
+
+
 /** Quantifier suffixes for memory units ("K", "M", "G", etc) */
 extern const char *ucs_memunits_suffixes[];
 
+
+/**
+ * Checks if a string is empty.
+ *
+ * @param str String to check.
+ *
+ * @return Whether @str is an empty string.
+ */
+static inline int ucs_string_is_empty(const char *str)
+{
+    return *str == '\0';
+}
 
 END_C_DECLS
 

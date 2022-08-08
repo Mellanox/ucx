@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2016.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2016. ALL RIGHTS RESERVED.
 * Copyright (C) Advanced Micro Devices, Inc. 2018. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
@@ -34,6 +34,7 @@
  */
 
 #include "hello_world_util.h"
+#include "ucp_util.h"
 
 #include <ucp/api/ucp.h>
 
@@ -80,11 +81,13 @@ static struct err_handling {
 
 static ucs_status_t ep_status   = UCS_OK;
 static uint16_t server_port     = 13337;
+static sa_family_t ai_family    = AF_INET;
 static long test_string_length  = 16;
 static const ucp_tag_t tag      = 0x1337a880u;
 static const ucp_tag_t tag_mask = UINT64_MAX;
 static const char *addr_msg_str = "UCX address message";
 static const char *data_msg_str = "UCX data message";
+static int print_config         = 0;
 static ucp_address_t *local_addr;
 static ucp_address_t *peer_addr;
 
@@ -153,7 +156,7 @@ static ucs_status_t ucx_wait(ucp_worker_h ucp_worker, struct ucx_context *reques
 
         request->completed = 0;
         status             = ucp_request_check_status(request);
-        ucp_request_release(request);
+        ucp_request_free(request);
     } else {
         status = UCS_OK;
     }
@@ -208,6 +211,19 @@ err_fd:
 
 err:
     return ret;
+}
+
+static void ep_close_err_mode(ucp_worker_h ucp_worker, ucp_ep_h ucp_ep)
+{
+    uint64_t ep_close_flags;
+
+    if (err_handling_opt.ucp_err_mode == UCP_ERR_HANDLING_MODE_PEER) {
+        ep_close_flags = UCP_EP_CLOSE_FLAG_FORCE;
+    } else {
+        ep_close_flags = 0;
+    }
+
+    ep_close(ucp_worker, ucp_ep, ep_close_flags);
 }
 
 static int run_ucx_client(ucp_worker_h ucp_worker)
@@ -292,7 +308,7 @@ static int run_ucx_client(ucp_worker_h ucp_worker)
             CHKERR_JUMP(status != UCS_OK, "test_poll_wait\n", err_ep);
         }
     }
-    
+
     if (err_handling_opt.failure_mode == FAILURE_MODE_KEEPALIVE) {
         fprintf(stderr, "Emulating unexpected failure after receive completion "
                         "on client side, server should detect error by "
@@ -329,13 +345,9 @@ static int run_ucx_client(ucp_worker_h ucp_worker)
 err_msg:
     mem_type_free(msg);
 err_ep:
-    ucp_ep_destroy(server_ep);
+    ep_close_err_mode(ucp_worker, server_ep);
 err:
     return ret;
-}
-
-static void flush_callback(void *request, ucs_status_t status, void *user_data)
-{
 }
 
 static ucs_status_t flush_ep(ucp_worker_h worker, ucp_ep_h ep)
@@ -343,8 +355,7 @@ static ucs_status_t flush_ep(ucp_worker_h worker, ucp_ep_h ep)
     ucp_request_param_t param;
     void *request;
 
-    param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK;
-    param.cb.send      = flush_callback;
+    param.op_attr_mask = 0;
     request            = ucp_ep_flush_nbx(ep, &param);
     if (request == NULL) {
         return UCS_OK;
@@ -356,7 +367,7 @@ static ucs_status_t flush_ep(ucp_worker_h worker, ucp_ep_h ep)
             ucp_worker_progress(worker);
             status = ucp_request_check_status(request);
         } while (status == UCS_INPROGRESS);
-        ucp_request_release(request);
+        ucp_request_free(request);
         return status;
     }
 }
@@ -491,7 +502,7 @@ static int run_ucx_server(ucp_worker_h ucp_worker)
 err_free_mem_type_msg:
     mem_type_free(msg);
 err_ep:
-    ucp_ep_destroy(client_ep);
+    ep_close_err_mode(ucp_worker, client_ep);
 err:
     return ret;
 }
@@ -503,6 +514,11 @@ static int run_test(const char *client_target_name, ucp_worker_h ucp_worker)
     } else {
         return run_ucx_server(ucp_worker);
     }
+}
+
+static void progress_worker(void *arg)
+{
+    ucp_worker_progress((ucp_worker_h)arg);
 }
 
 int main(int argc, char **argv)
@@ -546,7 +562,9 @@ int main(int argc, char **argv)
 
     status = ucp_init(&ucp_params, config, &ucp_context);
 
-    ucp_config_print(config, stdout, NULL, UCS_CONFIG_PRINT_CONFIG);
+    if (print_config) {
+        ucp_config_print(config, stdout, NULL, UCS_CONFIG_PRINT_CONFIG);
+    }
 
     ucp_config_release(config);
     CHKERR_JUMP(status != UCS_OK, "ucp_init\n", err);
@@ -567,7 +585,7 @@ int main(int argc, char **argv)
     if (client_target_name) {
         peer_addr_len = local_addr_len;
 
-        oob_sock = client_connect(client_target_name, server_port);
+        oob_sock = connect_common(client_target_name, server_port, ai_family);
         CHKERR_JUMP(oob_sock < 0, "client_connect\n", err_addr);
 
         ret = recv(oob_sock, &addr_len, sizeof(addr_len), MSG_WAITALL);
@@ -582,7 +600,7 @@ int main(int argc, char **argv)
         CHKERR_JUMP_RETVAL(ret != (int)peer_addr_len,
                            "receive address\n", err_peer_addr, ret);
     } else {
-        oob_sock = server_connect(server_port);
+        oob_sock = connect_common(NULL, server_port, ai_family);
         CHKERR_JUMP(oob_sock < 0, "server_connect\n", err_peer_addr);
 
         addr_len = local_addr_len;
@@ -597,9 +615,9 @@ int main(int argc, char **argv)
 
     ret = run_test(client_target_name, ucp_worker);
 
-    if (!ret && (err_handling_opt.failure_mode != FAILURE_MODE_NONE)) {
+    if (!ret && (err_handling_opt.failure_mode == FAILURE_MODE_NONE)) {
         /* Make sure remote is disconnected before destroying local worker */
-        ret = barrier(oob_sock);
+        ret = barrier(oob_sock, progress_worker, ucp_worker);
     }
     close(oob_sock);
 
@@ -641,6 +659,7 @@ static void print_usage()
                                 "before receive completed\n");
     fprintf(stderr, "            keepalive - keepalive failure on client side "
                                 "after communication completed\n");
+    fprintf(stderr, "  -c      Print UCP configuration\n");
     print_common_help();
     fprintf(stderr, "\n");
 }
@@ -652,7 +671,7 @@ ucs_status_t parse_cmd(int argc, char * const argv[], char **server_name)
     err_handling_opt.ucp_err_mode = UCP_ERR_HANDLING_MODE_NONE;
     err_handling_opt.failure_mode = FAILURE_MODE_NONE;
 
-    while ((c = getopt(argc, argv, "wfbe:n:p:s:m:h")) != -1) {
+    while ((c = getopt(argc, argv, "wfb6e:n:p:s:m:ch")) != -1) {
         switch (c) {
         case 'w':
             ucp_test_mode = TEST_MODE_WAIT;
@@ -679,6 +698,9 @@ ucs_status_t parse_cmd(int argc, char * const argv[], char **server_name)
         case 'n':
             *server_name = optarg;
             break;
+        case '6':
+            ai_family = AF_INET6;
+            break;
         case 'p':
             server_port = atoi(optarg);
             if (server_port <= 0) {
@@ -691,13 +713,16 @@ ucs_status_t parse_cmd(int argc, char * const argv[], char **server_name)
             if (test_string_length < 0) {
                 fprintf(stderr, "Wrong string size %ld\n", test_string_length);
                 return UCS_ERR_UNSUPPORTED;
-            }	
+            }
             break;
         case 'm':
             test_mem_type = parse_mem_type(optarg);
             if (test_mem_type == UCS_MEMORY_TYPE_LAST) {
                 return UCS_ERR_UNSUPPORTED;
             }
+            break;
+        case 'c':
+            print_config = 1;
             break;
         case 'h':
         default:

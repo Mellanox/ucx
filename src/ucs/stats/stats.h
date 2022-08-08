@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2013.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2013. ALL RIGHTS RESERVED.
 * Copyright (C) Huawei Technologies Co., Ltd. 2021.  ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
@@ -61,9 +61,9 @@ size_t ucs_stats_aggregate(ucs_stats_counter_t *counters, size_t max_counters);
 
 /**
  * A UCX statistics API to get the names of counters on the last call to
- * ucs_stats_aggregate(). 
+ * ucs_stats_aggregate().
  *
- * Note, that ucs_stats_aggregate() must be called before calling this 
+ * Note, that ucs_stats_aggregate() must be called before calling this
  * function.
  *
  * @param [out] names_p The aggregate-sum counters names database
@@ -100,7 +100,10 @@ void ucs_stats_node_free(ucs_stats_node_t *node);
     ucs_stats_node_t* _node;
 
 #define UCS_STATS_NODE_ALLOC(_p_node, _class, _parent, ...) \
-    ucs_stats_node_alloc(_p_node, _class, _parent, ## __VA_ARGS__ , "")
+    ucs_stats_node_alloc(_p_node, _class, _parent, ## __VA_ARGS__)
+
+#define UCS_STATS_NODE_RESET(_p_node) \
+    *(_p_node) = NULL
 
 #define UCS_STATS_NODE_FREE(_node) \
     ucs_stats_node_free(_node)
@@ -151,7 +154,9 @@ void ucs_stats_node_free(ucs_stats_node_t *node);
 #define UCS_STATS_ARG(_arg)
 #define UCS_STATS_RVAL(_rval) NULL
 #define UCS_STATS_NODE_DECLARE(_node)
-#define UCS_STATS_NODE_ALLOC(_p_node, _class, _parent, ...) ucs_empty_function_return_success()
+#define UCS_STATS_NODE_ALLOC(_p_node, _class, _parent, ...) \
+        ucs_empty_function_return_success()
+#define UCS_STATS_NODE_RESET(_p_node)
 #define UCS_STATS_NODE_FREE(_node)
 #define UCS_STATS_UPDATE_COUNTER(_node, _index, _delta)
 #define UCS_STATS_SET_COUNTER(_node, _index, _value)

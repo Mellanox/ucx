@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -226,6 +226,7 @@ static void ucm_log_vsnprintf(char *buf, size_t max, const char *fmt, va_list ap
                 flags |= UCM_LOG_LTOA_PAD_LEFT;
                 break;
             case 'l':
+            case 'z':
                 flags |= UCM_LOG_LTOA_FLAG_LONG;
                 break;
             case '0':
@@ -280,7 +281,7 @@ void __ucm_log(const char *file, unsigned line, const char *function,
     va_end(ap);
     strncat(buf, "\n", UCM_LOG_BUG_SIZE - 1);
 
-    /* Use writev to avoid potential calls to malloc() in buffered IO functions */
+    /* Use write to avoid potential calls to malloc() in buffered IO functions */
     nwrite = write(ucm_log_fileno, buf, strlen(buf));
     (void)nwrite;
 
@@ -289,6 +290,7 @@ void __ucm_log(const char *file, unsigned line, const char *function,
     }
 }
 
-UCS_STATIC_INIT {
+void ucm_init_log()
+{
     gethostname(ucm_log_hostname, sizeof(ucm_log_hostname));
 }

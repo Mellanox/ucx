@@ -1,6 +1,6 @@
 /**
  * Copyright (C) UT-Battelle, LLC. 2015-2017. ALL RIGHTS RESERVED.
- * Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -174,7 +174,7 @@ ucs_status_t uct_ugni_smsg_ep_connect_to_ep(uct_ep_h tl_ep,
     uct_ugni_cdm_unlock(&iface->cdm);
 
     if(GNI_RC_SUCCESS != gni_rc){
-        ucs_error("Failed to initalize smsg. %s [%i]", gni_err_str[gni_rc], gni_rc);
+        ucs_error("Failed to initialize smsg. %s [%i]", gni_err_str[gni_rc], gni_rc);
         if(GNI_RC_INVALID_PARAM == gni_rc){
             return UCS_ERR_INVALID_PARAM;
         } else {

@@ -45,16 +45,18 @@ static ucs_status_t uct_rocm_copy_md_query(uct_md_h md, uct_md_attr_t *md_attr)
     md_attr->cap.max_alloc        = 0;
     md_attr->cap.max_reg          = ULONG_MAX;
     md_attr->rkey_packed_size     = sizeof(uct_rocm_copy_key_t);
-    md_attr->reg_cost             = ucs_linear_func_make(0, 0);
+    md_attr->reg_cost             = UCS_LINEAR_FUNC_ZERO;
     memset(&md_attr->local_cpus, 0xff, sizeof(md_attr->local_cpus));
     return UCS_OK;
 }
 
-static ucs_status_t uct_rocm_copy_mkey_pack(uct_md_h md, uct_mem_h memh,
-                                            void *rkey_buffer)
+static ucs_status_t
+uct_rocm_copy_mkey_pack(uct_md_h uct_md, uct_mem_h memh,
+                        const uct_md_mkey_pack_params_t *params,
+                        void *rkey_buffer)
 {
-    uct_rocm_copy_key_t *packed   = (uct_rocm_copy_key_t *)rkey_buffer;
-    uct_rocm_copy_mem_t *mem_hndl = (uct_rocm_copy_mem_t *)memh;
+    uct_rocm_copy_key_t *packed   = rkey_buffer;
+    uct_rocm_copy_mem_t *mem_hndl = memh;
 
     packed->vaddr   = (uint64_t) mem_hndl->vaddr;
     packed->dev_ptr = mem_hndl->dev_ptr;
@@ -115,10 +117,7 @@ static ucs_status_t uct_rocm_copy_mem_reg_internal(
     ucs_status_t err;
     ucs_memory_type_t mem_type;
 
-    if(address == NULL) {
-        memset(mem_hndl, 0, sizeof(*mem_hndl));
-        return UCS_OK;
-    }
+    ucs_assert((address != NULL) && (length != 0));
 
     err = uct_rocm_base_detect_memory_type(uct_md, address, length, &mem_type);
     if (err != UCS_OK) {
@@ -148,8 +147,9 @@ static ucs_status_t uct_rocm_copy_mem_reg_internal(
     return UCS_OK;
 }
 
-static ucs_status_t uct_rocm_copy_mem_reg(uct_md_h md, void *address, size_t length,
-                                          unsigned flags, uct_mem_h *memh_p)
+static ucs_status_t
+uct_rocm_copy_mem_reg(uct_md_h md, void *address, size_t length,
+                      const uct_md_mem_reg_params_t *params, uct_mem_h *memh_p)
 {
     uct_rocm_copy_mem_t *mem_hndl = NULL;
     ucs_status_t status;
@@ -237,8 +237,11 @@ uct_rocm_copy_rache_region_from_memh(uct_mem_h memh)
 
 static ucs_status_t
 uct_rocm_copy_mem_rcache_reg(uct_md_h uct_md, void *address, size_t length,
-                             unsigned flags, uct_mem_h *memh_p)
+                             const uct_md_mem_reg_params_t *params,
+                             uct_mem_h *memh_p)
 {
+    uint64_t flags         = UCT_MD_MEM_REG_FIELD_VALUE(params, flags,
+                                                        FIELD_FLAGS, 0);
     uct_rocm_copy_md_t *md = ucs_derived_of(uct_md, uct_rocm_copy_md_t);
     ucs_rcache_region_t *rregion;
     ucs_status_t status;
@@ -342,7 +345,7 @@ uct_rocm_copy_md_open(uct_component_h component, const char *md_name,
     md->super.ops       = &md_ops;
     md->super.component = &uct_rocm_copy_component;
     md->rcache          = NULL;
-    md->reg_cost        = ucs_linear_func_make(0, 0);
+    md->reg_cost        = UCS_LINEAR_FUNC_ZERO;
 
     if (md_config->enable_rcache != UCS_NO) {
         rcache_params.region_struct_size = sizeof(uct_rocm_copy_rcache_region_t);
@@ -356,7 +359,7 @@ uct_rocm_copy_md_open(uct_component_h component, const char *md_name,
         status = ucs_rcache_create(&rcache_params, "rocm_copy", NULL, &md->rcache);
         if (status == UCS_OK) {
             md->super.ops = &md_rcache_ops;
-            md->reg_cost  = ucs_linear_func_make(0, 0);
+            md->reg_cost  = UCS_LINEAR_FUNC_ZERO;
         } else {
             ucs_assert(md->rcache == NULL);
             if (md_config->enable_rcache == UCS_YES) {
@@ -394,7 +397,8 @@ uct_component_t uct_rocm_copy_component = {
     },
     .cm_config          = UCS_CONFIG_EMPTY_GLOBAL_LIST_ENTRY,
     .tl_list            = UCT_COMPONENT_TL_LIST_INITIALIZER(&uct_rocm_copy_component),
-    .flags              = 0
+    .flags              = 0,
+    .md_vfs_init        = (uct_component_md_vfs_init_func_t)ucs_empty_function
 };
 UCT_COMPONENT_REGISTER(&uct_rocm_copy_component);
 

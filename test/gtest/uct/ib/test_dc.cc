@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2020.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2020. ALL RIGHTS RESERVED.
 * Copyright (C) UT-Battelle, LLC. 2016. ALL RIGHTS RESERVED.
 * Copyright (C) ARM Ltd. 2016.All rights reserved.
 * See file LICENSE for terms.
@@ -111,7 +111,7 @@ protected:
         int is_done;
     } preq;
 
-    static ucs_status_t uct_pending_flush(uct_pending_req_t *uct_req) 
+    static ucs_status_t uct_pending_flush(uct_pending_req_t *uct_req)
     {
         struct dcs_pending *preq = (struct dcs_pending *)uct_req;
         ucs_status_t status;
@@ -127,7 +127,7 @@ protected:
         return status;
     }
 
-    static ucs_status_t uct_pending_dummy(uct_pending_req_t *uct_req) 
+    static ucs_status_t uct_pending_dummy(uct_pending_req_t *uct_req)
     {
         struct dcs_pending *preq = (struct dcs_pending *)uct_req;
         uct_dc_mlx5_ep_t *ep;
@@ -136,7 +136,7 @@ protected:
 
         EXPECT_NE(UCT_DC_MLX5_EP_NO_DCI, ep->dci);
 
-        /* simulate arbiter stop because lack of global resorce
+        /* simulate arbiter stop because lack of global resource
          * operation still stands on pending
          */
         preq->is_done = 1;
@@ -223,10 +223,10 @@ UCS_TEST_P(test_dc, dcs_multi) {
     }
 }
 
-/** 
+/**
  * send message, destroy ep while it is still holding dci.
  * Do not crash.
- */ 
+ */
 UCS_TEST_P(test_dc, dcs_ep_destroy) {
 
     uct_dc_mlx5_ep_t *ep;
@@ -403,7 +403,7 @@ UCS_TEST_P(test_dc, rand_dci_many_eps) {
 UCS_TEST_P(test_dc, rand_dci_pending_purge) {
     entity *rand_e             = create_rand_entity();
     uct_dc_mlx5_iface_t *iface = dc_iface(rand_e);
-    int num_eps                = 5;
+    int num_eps                = RUNNING_ON_VALGRIND ? 3 : 5;
     int ndci                   = iface->tx.ndci;
     int num_reqs               = 10;
     int idx                    = 0;
@@ -461,23 +461,12 @@ public:
     {
         uct_dc_mlx5_iface_t *iface = ucs_derived_of(e->ep(ep_idx)->iface,
                                                     uct_dc_mlx5_iface_t);
+        uct_dc_mlx5_ep_t *ep       = ucs_derived_of(e->ep(ep_idx),
+                                                    uct_dc_mlx5_ep_t);
 
         get_fc_ptr(e, ep_idx)->fc_wnd = fc_wnd;
-
-        if (fc_wnd <= iface->super.super.config.fc_hard_thresh) {
-            int ret;
-            khiter_t it = kh_put(uct_dc_mlx5_fc_hash, &iface->tx.fc_hash,
-                                 (uint64_t)e->ep(ep_idx), &ret);
-            if ((ret == UCS_KH_PUT_FAILED) || (ret == UCS_KH_PUT_KEY_PRESENT)) {
-                return;
-            }
-
-            uct_dc_mlx5_ep_fc_entry_t *fc_entry = &kh_value(&iface->tx.fc_hash,
-                                                            it);
-
-            fc_entry->seq       = iface->tx.fc_seq++;
-            fc_entry->send_time = ucs_get_time();
-        }
+        ucs_status_t status           = uct_dc_mlx5_ep_check_fc(iface, ep);
+        ASSERT_TRUE((status == UCS_OK) || (status == UCS_ERR_NO_RESOURCE));
     }
 
     virtual void disable_entity(entity *e) {
@@ -499,6 +488,18 @@ public:
                                       iface->tx.dcis[i].txwq.bb_max);
         }
         iface->tx.dci_pool[0].stack_top = 0;
+
+        uint8_t pool_index;
+        for (pool_index = 0; pool_index < iface->tx.num_dci_pools;
+             ++pool_index) {
+            uct_dc_mlx5_iface_progress_pending(iface, pool_index);
+        }
+    }
+
+    virtual void test_pending_grant(int wnd, uint64_t *wait_fc_seq = NULL)
+    {
+        test_rc_flow_control::test_pending_grant(wnd, wait_fc_seq);
+        flush();
     }
 };
 
@@ -518,7 +519,14 @@ UCS_TEST_P(test_dc_flow_control, general_disabled)
 UCS_TEST_P(test_dc_flow_control, pending_grant)
 {
     test_pending_grant(5);
-    flush();
+}
+
+UCS_TEST_P(test_dc_flow_control, pending_grant_and_resend_hard_req,
+           "DC_FC_HARD_REQ_TIMEOUT=0.1s")
+{
+    uct_dc_mlx5_iface_t *iface = ucs_derived_of(m_e1->iface(),
+                                                uct_dc_mlx5_iface_t);
+    test_pending_grant(5, &iface->tx.fc_seq);
 }
 
 UCS_TEST_P(test_dc_flow_control, fc_disabled_flush)
@@ -638,7 +646,7 @@ UCS_TEST_P(test_dc_flow_control, dci_leak)
     }
     EXPECT_EQ(0, iface->tx.dci_pool[0].stack_top);
 
-    /* Clean up FC and pending to avoid assetions during tear down */
+    /* Clean up FC and pending to avoid assertions during tear down */
     uct_ep_pending_purge(m_e1->ep(0),
            reinterpret_cast<void (*)(uct_pending_req*, void*)> (ucs_empty_function),
            NULL);

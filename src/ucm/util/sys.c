@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2016.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2016. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -16,7 +16,9 @@
 
 #include <ucm/api/ucm.h>
 #include <ucm/util/log.h>
+#include <ucm/util/reloc.h>
 #include <ucm/mmap/mmap.h>
+#include <ucm/malloc/malloc_hook.h>
 #include <ucs/type/init_once.h>
 #include <ucs/sys/math.h>
 #include <linux/mman.h>
@@ -38,7 +40,11 @@ ucm_global_config_t ucm_global_opts = {
     .mmap_hook_mode             = UCM_DEFAULT_HOOK_MODE,
     .enable_malloc_hooks        = 1,
     .enable_malloc_reloc        = 0,
-    .cuda_hook_mode             = UCM_DEFAULT_HOOK_MODE,
+    .cuda_hook_modes            =
+#if UCM_BISTRO_HOOKS
+                                  UCS_BIT(UCM_MMAP_HOOK_BISTRO) |
+#endif
+                                  UCS_BIT(UCM_MMAP_HOOK_RELOC),
     .enable_dynamic_mmap_thresh = 1,
     .alloc_alignment            = 16,
     .dlopen_process_rpath       = 1
@@ -156,7 +162,8 @@ void ucm_parse_proc_self_maps(ucm_proc_maps_cb_t cb, void *arg)
 
     maps_fd = open(UCM_PROC_SELF_MAPS, O_RDONLY);
     if (maps_fd < 0) {
-        ucm_fatal("cannot open %s for reading: %m", UCM_PROC_SELF_MAPS);
+        ucm_warn("cannot open %s for reading: %m", UCM_PROC_SELF_MAPS);
+        return;
     }
 
     /* read /proc/self/maps fully into the buffer */
@@ -284,6 +291,7 @@ void ucm_strerror(int eno, char *buf, size_t max)
 
 void ucm_prevent_dl_unload()
 {
+#ifdef UCX_SHARED_LIB
     static ucs_init_once_t init_once = UCS_INIT_ONCE_INITIALIZER;
     int flags                        = RTLD_LOCAL | RTLD_NODELETE;
     Dl_info info;
@@ -304,7 +312,7 @@ void ucm_prevent_dl_unload()
         ret = dladdr(ucm_prevent_dl_unload, &info);
         if (ret == 0) {
             ucm_warn("could not find address of current library: %s", dlerror());
-            return;
+            continue;
         }
 
         /* Load the current library with NODELETE flag, to prevent it from being
@@ -315,7 +323,7 @@ void ucm_prevent_dl_unload()
         dl = dlopen(info.dli_fname, flags);
         if (dl == NULL) {
             ucm_warn("failed to load '%s': %s", info.dli_fname, dlerror());
-            return;
+            continue;
         }
 
         ucm_debug("loaded '%s' at %p with NODELETE flag", info.dli_fname, dl);
@@ -323,6 +331,7 @@ void ucm_prevent_dl_unload()
         /* coverity[overwrite_var] */
         dl = NULL;
     }
+#endif /* UCX_SHARED_LIB */
 }
 
 char *ucm_concat_path(char *buffer, size_t max, const char *dir, const char *file)
@@ -357,22 +366,20 @@ char *ucm_concat_path(char *buffer, size_t max, const char *dir, const char *fil
 
 void *ucm_brk_syscall(void *addr)
 {
-    void *result;
+    /* Return type is equivalent to full pointer size */
+    UCS_STATIC_ASSERT(sizeof(syscall(0)) == sizeof(void*));
 
-#ifdef __x86_64__
-    asm volatile("mov %1, %%rdi\n\t"
-                 "mov $0xc, %%eax\n\t"
-                 "syscall\n\t"
-                 : "=a"(result)
-                 : "m"(addr));
-#else
-    /* TODO implement 64-bit syscall for aarch64, ppc64le */
-    result = (void*)syscall(SYS_brk, addr);
-#endif
-    return result;
+    return (void*)syscall(SYS_brk, addr);
 }
 
 pid_t ucm_get_tid()
 {
     return syscall(SYS_gettid);
 }
+
+void UCS_F_CTOR ucm_init()
+{
+    ucm_init_log();
+    ucm_init_malloc_hook();
+}
+

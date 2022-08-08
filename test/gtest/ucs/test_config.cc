@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019. ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 * Copyright (C) UT-Battelle, LLC. 2014. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
@@ -289,6 +289,10 @@ protected:
 
         car_opts(const car_opts& orig) : m_max(orig.m_max)
         {
+            /* reset 'm_opts' to suppress Coverity warning that fields are not
+             * initialized in the constructor */ 
+            memset(&m_opts, 0, sizeof(m_opts));
+
             m_value = new char[m_max];
             strncpy(m_value, orig.m_value, m_max);
 
@@ -440,7 +444,7 @@ UCS_TEST_F(test_config, parse_default) {
     EXPECT_EQ(UCS_MBYTE * 128.0, opts->bw_mbits);
     EXPECT_EQ(UCS_GBYTE * 128.0, opts->bw_gbits);
     EXPECT_EQ(UCS_TBYTE * 128.0, opts->bw_tbits);
-    EXPECT_TRUE(UCS_CONFIG_BW_IS_AUTO(opts->bw_auto));
+    EXPECT_TRUE(UCS_CONFIG_DBL_IS_AUTO(opts->bw_auto));
 
     EXPECT_EQ(UCS_TBYTE * 128.0, opts->can_pci_bw.bw);
     EXPECT_EQ(std::string("mlx5_0"), opts->can_pci_bw.name);
@@ -557,7 +561,7 @@ UCS_TEST_F(test_config, unused) {
     /* set to warn about unused env vars */
     ucs_global_opts.warn_unused_env_vars = 1;
 
-    const std::string warn_str    = "unused env variable";
+    const std::string warn_str    = "unused environment variable";
     const std::string unused_var1 = "UCX_UNUSED_VAR1";
     /* coverity[tainted_string_argument] */
     ucs::scoped_setenv env1(unused_var1.c_str(), "unused");

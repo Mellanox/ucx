@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Mellanox Technologies Ltd. 2019. ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -20,7 +20,7 @@ Java_org_openucx_jucx_ucs_UcsConstants_loadConstants(JNIEnv *env, jclass ucs_cla
     /* Operation completed successfully */
     JUCX_DEFINE_INT_CONSTANT(UCS_OK);
 
-    /* Operation is queued and stil in progress */
+    /* Operation is queued and still in progress */
     JUCX_DEFINE_INT_CONSTANT(UCS_INPROGRESS);
     /* Failure codes */
     JUCX_DEFINE_INT_CONSTANT(UCS_ERR_NO_MESSAGE);

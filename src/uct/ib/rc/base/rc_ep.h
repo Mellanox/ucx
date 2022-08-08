@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -52,6 +52,9 @@ enum {
 
     /* Error handler already called or flush(CANCEL) disabled it */
     UCT_RC_EP_FLAG_ERR_HANDLER_INVOKED = UCS_BIT(3),
+
+    /* Flush remote needs to be executed on the EP */
+    UCT_RC_EP_FLAG_FLUSH_REMOTE        = UCS_BIT(4),
 
     /* Soft Credit Request: indicates that peer needs to piggy-back credits
      * grant to counter AM (if any). Can be bundled with
@@ -148,15 +151,12 @@ enum {
     } \
 
 
-#define UCT_RC_UPDATE_FC_WND(_iface, _fc) \
+#define UCT_RC_UPDATE_FC_WND(_fc) \
     { \
         /* For performance reasons, prefer to update fc_wnd unconditionally */ \
         (_fc)->fc_wnd--; \
-        \
-        if ((_iface)->config.fc_enabled) { \
-            UCS_STATS_SET_COUNTER((_fc)->stats, UCT_RC_FC_STAT_FC_WND, \
-                                  (_fc)->fc_wnd); \
-        } \
+        UCS_STATS_SET_COUNTER((_fc)->stats, UCT_RC_FC_STAT_FC_WND, \
+                              (_fc)->fc_wnd); \
     }
 
 #define UCT_RC_CHECK_FC(_iface, _ep, _am_id) \
@@ -173,7 +173,7 @@ enum {
         (_am_id) |= uct_rc_fc_get_fc_hdr((_ep)->flags); /* take grant bit */ \
     }
 
-#define UCT_RC_UPDATE_FC(_iface, _ep, _fc_hdr) \
+#define UCT_RC_UPDATE_FC(_ep, _fc_hdr) \
     { \
         if ((_fc_hdr) & UCT_RC_EP_FLAG_FC_GRANT) { \
             UCS_STATS_UPDATE_COUNTER((_ep)->fc.stats, UCT_RC_FC_STAT_TX_GRANT, 1); \
@@ -186,7 +186,7 @@ enum {
         \
         (_ep)->flags &= ~UCT_RC_EP_FC_MASK; \
         \
-        UCT_RC_UPDATE_FC_WND(_iface, &(_ep)->fc) \
+        UCT_RC_UPDATE_FC_WND(&(_ep)->fc) \
     }
 
 #define UCT_RC_CHECK_RES_AND_FC(_iface, _ep, _am_id) \
@@ -216,6 +216,7 @@ struct uct_rc_ep {
     uct_rc_txqp_t       txqp;
     ucs_list_link_t     list;
     ucs_arbiter_group_t arb_group;
+    uint32_t            flush_rkey;
     uct_rc_fc_t         fc;
     uint16_t            atomic_mr_offset;
     uint8_t             path_index;
@@ -238,6 +239,9 @@ void uct_rc_ep_get_bcopy_handler(uct_rc_iface_send_op_t *op, const void *resp);
 void uct_rc_ep_get_bcopy_handler_no_completion(uct_rc_iface_send_op_t *op,
                                                const void *resp);
 
+void uct_rc_ep_flush_remote_handler(uct_rc_iface_send_op_t *op,
+                                    const void *resp);
+
 void uct_rc_ep_get_zcopy_completion_handler(uct_rc_iface_send_op_t *op,
                                             const void *resp);
 
@@ -250,6 +254,11 @@ void uct_rc_ep_flush_op_completion_handler(uct_rc_iface_send_op_t *op,
 ucs_status_t uct_rc_ep_pending_add(uct_ep_h tl_ep, uct_pending_req_t *n,
                                    unsigned flags);
 
+ucs_arbiter_cb_result_t
+uct_rc_ep_arbiter_purge_internal_cb(ucs_arbiter_t *arbiter,
+                                    ucs_arbiter_group_t *group,
+                                    ucs_arbiter_elem_t *elem, void *arg);
+
 ucs_arbiter_cb_result_t uct_rc_ep_arbiter_purge_cb(ucs_arbiter_t *arbiter,
                                                    ucs_arbiter_group_t *group,
                                                    ucs_arbiter_elem_t *elem,
@@ -258,7 +267,7 @@ ucs_arbiter_cb_result_t uct_rc_ep_arbiter_purge_cb(ucs_arbiter_t *arbiter,
 void uct_rc_ep_pending_purge(uct_ep_h ep, uct_pending_purge_callback_t cb,
                              void*arg);
 
-ucs_status_t uct_rc_fc_init(uct_rc_fc_t *fc, int16_t winsize
+ucs_status_t uct_rc_fc_init(uct_rc_fc_t *fc, uct_rc_iface_t *iface
                             UCS_STATS_ARG(ucs_stats_node_t* stats_parent));
 void uct_rc_fc_cleanup(uct_rc_fc_t *fc);
 
@@ -276,6 +285,8 @@ uct_rc_ep_check(uct_ep_h tl_ep, unsigned flags, uct_completion_t *comp);
 void uct_rc_ep_cleanup_qp(uct_rc_ep_t *ep,
                           uct_rc_iface_qp_cleanup_ctx_t *cleanup_ctx,
                           uint32_t qp_num, uint16_t cq_credits);
+
+void uct_rc_ep_pending_purge_warn_cb(uct_pending_req_t *self, void *arg);
 
 void UCT_RC_DEFINE_ATOMIC_HANDLER_FUNC_NAME(32, 0)(uct_rc_iface_send_op_t *op,
                                                    const void *resp);
@@ -318,6 +329,13 @@ int uct_rc_fc_has_resources(uct_rc_iface_t *iface, uct_rc_fc_t *fc)
     /* When FC is disabled, fc_wnd may still become 0 because it's decremented
      * unconditionally (for performance reasons) */
     return (fc->fc_wnd > 0) || !iface->config.fc_enabled;
+}
+
+static UCS_F_ALWAYS_INLINE void uct_rc_fc_restore_wnd(uct_rc_iface_t *iface,
+                                                      uct_rc_fc_t *fc)
+{
+    fc->fc_wnd = iface->config.fc_wnd_size;
+    UCS_STATS_SET_COUNTER(fc->stats, UCT_RC_FC_STAT_FC_WND, fc->fc_wnd);
 }
 
 static UCS_F_ALWAYS_INLINE int uct_rc_ep_has_tx_resources(uct_rc_ep_t *ep)
@@ -377,8 +395,8 @@ uct_rc_txqp_add_send_comp(uct_rc_iface_t *iface, uct_rc_txqp_t *txqp,
 
 static inline void
 uct_rc_ep_init_send_op(uct_rc_iface_send_op_t *op, unsigned flags,
-                            uct_completion_t *comp,
-                            uct_rc_send_handler_t handler)
+                       uct_completion_t *comp,
+                       uct_rc_send_handler_t handler)
 {
     op->flags     = flags;
     op->user_comp = comp;
@@ -400,6 +418,7 @@ uct_rc_txqp_add_flush_comp(uct_rc_iface_t *iface, uct_base_ep_t *ep,
         }
 
         uct_rc_ep_init_send_op(op, 0, comp, uct_rc_ep_flush_op_completion_handler);
+        uct_rc_iface_send_op_set_name(op, "rc_txqp_add_flush_comp");
         op->iface = iface;
         uct_rc_txqp_add_send_op_sn(txqp, op, sn);
     }
@@ -520,6 +539,18 @@ uct_rc_ep_fence_put(uct_rc_iface_t *iface, uct_ib_fence_info_t *fi,
     } else {
         *rkey = uct_ib_md_direct_rkey(*rkey);
     }
+}
+
+static UCS_F_ALWAYS_INLINE void
+uct_rc_ep_enable_flush_remote(uct_rc_ep_t *ep)
+{
+    ep->flags |= UCT_RC_EP_FLAG_FLUSH_REMOTE;
+}
+
+static UCS_F_ALWAYS_INLINE int uct_rc_ep_is_flush_remote(uct_rc_ep_t *ep)
+{
+    return (ep->flags & UCT_RC_EP_FLAG_FLUSH_REMOTE) &&
+           uct_ib_md_is_flush_rkey_valid(ep->flush_rkey);
 }
 
 #endif
