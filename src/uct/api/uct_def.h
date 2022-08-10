@@ -516,8 +516,8 @@ typedef struct uct_am_callback_params {
  * @ingroup UCT_AM
  * @brief Callback to process incoming active message
  *
- * When the callback is called, @a flags indicates how @a msg_header should be handled.
- * If @a flags contain @ref UCT_CB_PARAM_FLAG_DESC value, it means @a msg_header is part of
+ * When the callback is called, @a flags indicates how @a msg_hdr should be handled.
+ * If @a flags contain @ref UCT_CB_PARAM_FLAG_DESC value, it means @a msg_hdr is part of
  * a descriptor which must be released later by @ref uct_iface_release_desc by
  * the user if the callback returns @ref UCS_INPROGRESS.
  * See @ref uct_am_callback_params_t for more information about @a param.
