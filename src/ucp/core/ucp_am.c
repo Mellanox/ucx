@@ -195,7 +195,9 @@ UCS_PROFILE_FUNC_VOID(ucp_am_data_release, (worker, data),
                       ucp_worker_h worker, void *data)
 {
     ucp_recv_desc_t *rdesc = (ucp_recv_desc_t *)data - 1;
+    ucp_rndv_rts_hdr_t *rts;
 
+    ucp_am_concat_msg_hdr(data, rdesc->payload, sizeof(*rts), rts);
     if (ucs_unlikely(rdesc->flags & UCP_RECV_DESC_FLAG_MALLOC)) {
         ucp_am_release_long_desc(rdesc);
         return;
@@ -211,7 +213,7 @@ UCS_PROFILE_FUNC_VOID(ucp_am_data_release, (worker, data),
 
         /* This data is not needed (rndv receive was not initiated), send ATS
          * back to the sender to complete its send request. */
-        ucp_am_rndv_send_ats(worker, data, UCS_OK);
+        ucp_am_rndv_send_ats(worker, rts, UCS_OK);
     }
 
     UCP_WORKER_THREAD_CS_ENTER_CONDITIONAL(worker);
@@ -877,8 +879,6 @@ ucp_am_send_req(ucp_request_t *req, size_t count,
             return UCS_STATUS_PTR(status);
         }
 
-        ucs_assert(ucp_am_send_req_total_size(req) >= rndv_thresh);
-
         status = ucp_am_send_start_rndv(req, param);
         if (status != UCS_OK) {
             return UCS_STATUS_PTR(status);
@@ -1064,6 +1064,7 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_am_recv_data_nbx,
                  size_t count, const ucp_request_param_t *param)
 {
     ucp_recv_desc_t *desc = (ucp_recv_desc_t*)data_desc - 1;
+    void *payload         = desc->payload;
     ucp_context_h context = worker->context;
     ucs_status_ptr_t ret;
     ucp_request_t *req;
@@ -1073,6 +1074,7 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_am_recv_data_nbx,
     ucs_status_t status;
     size_t recv_length, rkey_length;
 
+    ucp_am_concat_msg_hdr(data_desc, payload, desc->length, rts);
     /* Sanity check if the descriptor has been released */
     if (ENABLE_PARAMS_CHECK &&
         ucs_unlikely(desc->flags & UCP_RECV_DESC_FLAG_RELEASED)) {
@@ -1120,7 +1122,6 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_am_recv_data_nbx,
         req->recv.mem_type = mem_type;
         req->recv.op_attr  = param->op_attr_mask;
         req->recv.am.desc  = desc;
-        rts                = data_desc;
 
 #if ENABLE_DEBUG_DATA
         req->recv.proto_rndv_config = NULL;
@@ -1141,7 +1142,7 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_am_recv_data_nbx,
                     rts->size);
 
         rkey_length = desc->length - sizeof(*rts) -
-                      ucp_am_hdr_from_rts(rts)->header_length;
+                      ucp_am_hdr_from_rts((rts))->header_length;
         ucp_rndv_receive_start(worker, req, rts, rts + 1, rkey_length);
         ret = req + 1;
         goto out;
@@ -1149,7 +1150,7 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_am_recv_data_nbx,
 
     if (desc->flags & UCP_RECV_DESC_FLAG_RNDV) {
         /* Nothing to receive, send ack to sender to complete its request */
-        ucp_am_rndv_send_ats(worker, data_desc, UCS_OK);
+        ucp_am_rndv_send_ats(worker, rts, UCS_OK);
         recv_length = 0ul;
         status      = UCS_OK;
     } else {
@@ -1201,6 +1202,7 @@ ucp_am_invoke_cb(ucp_worker_h worker, uint16_t am_id, void *user_hdr,
                  ucp_ep_h reply_ep, uint64_t recv_flags)
 {
     ucp_am_entry_t *am_cb = &ucs_array_elem(&worker->am.cbs, am_id);
+    ucp_recv_desc_t *desc = data;
     ucp_am_recv_param_t param;
     unsigned flags;
 
@@ -1212,8 +1214,9 @@ ucp_am_invoke_cb(ucp_worker_h worker, uint16_t am_id, void *user_hdr,
         param.recv_attr = recv_flags;
         param.reply_ep  = reply_ep;
 
-        return am_cb->cb(am_cb->context, user_hdr, user_hdr_length, data,
-                         data_length, &param);
+        param.data_desc = desc + 1;
+        return am_cb->cb(am_cb->context, user_hdr, user_hdr_length,
+                         desc->payload, data_length, &param);
     }
 
     if (ucs_unlikely(user_hdr_length != 0)) {
@@ -1226,13 +1229,14 @@ ucp_am_invoke_cb(ucp_worker_h worker, uint16_t am_id, void *user_hdr,
     flags = (recv_flags & UCP_AM_RECV_ATTR_FLAG_DATA) ?
             UCP_CB_PARAM_FLAG_DATA : 0;
 
-    return am_cb->cb_old(am_cb->context, data, data_length, reply_ep, flags);
+    return am_cb->cb_old(am_cb->context, desc->payload, data_length, reply_ep,
+                         flags);
 }
 
-static UCS_F_ALWAYS_INLINE ucs_status_t ucp_am_handler_common(
-        ucp_worker_h worker, ucp_am_hdr_t *am_hdr, size_t total_length,
-        ucp_ep_h reply_ep, unsigned am_flags, uint64_t recv_flags,
-        const char *name)
+static UCS_F_ALWAYS_INLINE ucs_status_t
+ucp_am_handler_common(ucp_worker_h worker, ucp_am_hdr_t *am_hdr, void *payload,
+                      size_t total_length, ucp_ep_h reply_ep, unsigned am_flags,
+                      uint64_t recv_flags, const char *name)
 {
     ucp_recv_desc_t *desc    = NULL;
     uint16_t am_id           = am_hdr->am_id;
@@ -1241,7 +1245,7 @@ static UCS_F_ALWAYS_INLINE ucs_status_t ucp_am_handler_common(
     void *data               = am_hdr + 1;
     size_t data_length       = total_length -
                                (sizeof(*am_hdr) + am_hdr->header_length);
-    void *user_hdr           = UCS_PTR_BYTE_OFFSET(data, data_length);
+    void *user_hdr           = UCS_PTR_BYTE_OFFSET(payload, data_length);
     ucs_status_t desc_status = UCS_OK;
     ucs_status_t status;
 
@@ -1277,11 +1281,12 @@ static UCS_F_ALWAYS_INLINE ucs_status_t ucp_am_handler_common(
                       worker, am_id);
             return UCS_OK;
         }
-        data        = desc + 1;
+        desc->payload = payload;
+        desc->length  = data_length;
         recv_flags |= UCP_AM_RECV_ATTR_FLAG_DATA;
     }
 
-    status = ucp_am_invoke_cb(worker, am_id, user_hdr, user_hdr_size, data,
+    status = ucp_am_invoke_cb(worker, am_id, user_hdr, user_hdr_size, desc,
                               data_length, reply_ep, recv_flags);
     if (desc == NULL) {
         if (ucs_unlikely(status == UCS_INPROGRESS)) {
@@ -1312,15 +1317,18 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_am_handler_reply,
 {
     ucp_am_hdr_t *hdr       = (ucp_am_hdr_t*)am_data;
     ucp_worker_h worker     = (ucp_worker_h)am_arg;
-    ucp_am_reply_ftr_t *ftr = UCS_PTR_BYTE_OFFSET(am_data,
-                                                  am_length - sizeof(*ftr));
+    void *payload           = params->payload;
+    ucp_am_reply_ftr_t *ftr = UCS_PTR_BYTE_OFFSET(payload,
+                                                  am_length - sizeof(*ftr) -
+                                                          sizeof(ucp_am_hdr_t));
     ucp_ep_h reply_ep;
 
     UCP_WORKER_GET_VALID_EP_BY_ID(&reply_ep, worker, ftr->ep_id, return UCS_OK,
                                   "AM (reply proto)");
 
-    return ucp_am_handler_common(worker, hdr, am_length - sizeof(ftr), reply_ep,
-                                 am_flags, UCP_AM_RECV_ATTR_FIELD_REPLY_EP,
+    return ucp_am_handler_common(worker, hdr, payload, am_length - sizeof(ftr),
+                                 reply_ep, am_flags,
+                                 UCP_AM_RECV_ATTR_FIELD_REPLY_EP,
                                  "am_handler_reply");
 }
 
@@ -1331,9 +1339,10 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_am_handler,
 {
     ucp_worker_h worker = am_arg;
     ucp_am_hdr_t *hdr   = am_data;
+    void *payload       = params->payload;
 
-    return ucp_am_handler_common(worker, hdr, am_length, NULL, am_flags, 0ul,
-                                 "am_handler");
+    return ucp_am_handler_common(worker, hdr, payload, am_length, NULL,
+                                 am_flags, 0ul, "am_handler");
 }
 
 static UCS_F_ALWAYS_INLINE ucp_recv_desc_t *
@@ -1450,6 +1459,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_am_long_first_handler,
 {
     ucp_worker_h worker    = am_arg;
     ucp_am_hdr_t *hdr      = am_data;
+    void *payload          = params->payload;
     size_t user_hdr_length = hdr->header_length;
     ucp_recv_desc_t *mid_rdesc, *first_rdesc;
     ucp_am_mid_hdr_t *mid_hdr;
@@ -1475,7 +1485,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_am_long_first_handler,
         /* Can be a single fragment if send was issued on stub ep */
         recv_flags = ucp_am_hdr_reply_ep(worker, hdr->flags, ep, &ep);
 
-        return ucp_am_handler_common(worker, hdr,
+        return ucp_am_handler_common(worker, hdr, payload,
                                      am_length - sizeof(*first_ftr), ep,
                                      am_flags, recv_flags,
                                      "am_long_first_handler");
@@ -1610,20 +1620,24 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_am_long_middle_handler,
     return status;
 }
 
-ucs_status_t ucp_am_rndv_process_rts(void *arg, void *data, size_t length,
-                                     unsigned tl_flags)
+ucs_status_t ucp_am_rndv_process_rts(void *arg, void *data, void *payload,
+                                     size_t length, unsigned tl_flags)
 {
-    ucp_rndv_rts_hdr_t *rts = data;
     ucp_worker_h worker     = arg;
-    ucp_am_hdr_t *am        = ucp_am_hdr_from_rts(rts);
-    uint16_t am_id          = am->am_id;
     ucp_recv_desc_t *desc   = NULL;
-    ucp_am_entry_t *am_cb   = &ucs_array_elem(&worker->am.cbs, am_id);
     ucp_ep_h ep;
+    ucp_rndv_rts_hdr_t *rts;
+    ucp_am_hdr_t *am;
+    uint16_t am_id;
+    ucp_am_entry_t *am_cb;
     ucp_am_recv_param_t param;
     ucs_status_t status, desc_status;
     void *hdr;
 
+    ucp_am_concat_msg_hdr(data, payload, length, rts);
+    am    = ucp_am_hdr_from_rts((rts));
+    am_id = am->am_id;
+    am_cb = &ucs_array_elem(&worker->am.cbs, am_id);
     if (ENABLE_PARAMS_CHECK && !(am_cb->flags & UCP_AM_CB_PRIV_FLAG_NBX)) {
         ucs_error("active message callback registered with "
                   "ucp_worker_set_am_handler() API does not support rendezvous "
@@ -1644,7 +1658,8 @@ ucs_status_t ucp_am_rndv_process_rts(void *arg, void *data, size_t length,
 
     if (am->header_length != 0) {
         ucs_assert(length >= am->header_length + sizeof(*rts));
-        hdr = UCS_PTR_BYTE_OFFSET(rts, length - am->header_length);
+        hdr = UCS_PTR_BYTE_OFFSET(payload, length - am->header_length -
+                                                   sizeof(ucp_am_hdr_t));
     } else {
         hdr = NULL;
     }
@@ -1653,6 +1668,8 @@ ucs_status_t ucp_am_rndv_process_rts(void *arg, void *data, size_t length,
                                      UCP_RECV_DESC_FLAG_RNDV |
                                      UCP_RECV_DESC_FLAG_AM_CB_INPROGRESS, 0, 1,
                                      "am_rndv_process_rts", &desc);
+    desc->payload = payload;
+    desc->length  = length;
     if (ucs_unlikely(UCS_STATUS_IS_ERR(desc_status))) {
         ucs_error("worker %p could not allocate descriptor for active"
                   " message RTS on callback %u", worker, am_id);
@@ -1663,8 +1680,9 @@ ucs_status_t ucp_am_rndv_process_rts(void *arg, void *data, size_t length,
     param.recv_attr = UCP_AM_RECV_ATTR_FLAG_RNDV |
                       ucp_am_hdr_reply_ep(worker, am->flags, ep,
                                           &param.reply_ep);
-    status          = am_cb->cb(am_cb->context, hdr, am->header_length,
-                                desc + 1, rts->size, &param);
+    param.data_desc = desc + 1;
+    status = am_cb->cb(am_cb->context, hdr, am->header_length, desc->payload,
+                       rts->size, &param);
     if (ucp_am_rdesc_in_progress(desc, status)) {
         /* User either wants to save descriptor for later use or initiated
          * rendezvous receive (by ucp_am_recv_data_nbx) in the callback. */
