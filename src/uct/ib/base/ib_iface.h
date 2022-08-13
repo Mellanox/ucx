@@ -51,6 +51,17 @@ enum {
 };
 
 
+#define UCT_IB_IFACE_TERMINATE_SCATTER_LIST_MKEY 0x100
+/**
+ * IB RX segments scatter gather list entries.
+ */
+enum {
+    UCT_IB_RX_SG_TL_HEADER_IDX = 0,
+    UCT_IB_RX_SG_PAYLOAD_IDX   = 1,
+    UCT_IB_RECV_SG_LIST_LEN
+};
+
+
 /**
  * IB port/path MTU.
  */
@@ -325,8 +336,8 @@ UCS_CLASS_DECLARE(uct_ib_iface_t, uct_iface_ops_t*, uct_ib_iface_ops_t*,
  *                   |
  * uct_recv_desc_t   |
  *               |   |
- *               |   am_callback/tag_unexp_callback
- *               |   |
+ *               |               am_callback/tag_unexp_callback
+ *               |               |
  * +------+------+---+-----------+---------+
  * | LKey |  ??? | D | Head Room | Payload |
  * +------+------+---+--+--------+---------+
@@ -336,8 +347,8 @@ UCS_CLASS_DECLARE(uct_ib_iface_t, uct_iface_ops_t*, uct_ib_iface_ops_t*,
  *                      post_receive
  *
  * (2)
- *            am_callback/tag_unexp_callback
- *            |
+ *                               am_callback/tag_unexp_callback
+ *                               |
  * +------+---+------------------+---------+
  * | LKey | D |     Head Room    | Payload |
  * +------+---+-----+---+--------+---------+
@@ -352,13 +363,19 @@ UCS_CLASS_DECLARE(uct_ib_iface_t, uct_iface_ops_t*, uct_ib_iface_ops_t*,
  *
  */
 typedef struct uct_ib_iface_recv_desc {
-    uint32_t                lkey;
+    uint32_t header_lkey;
+    uint32_t payload_lkey;
+    void     *payload;
+    int      release_payload;
 } UCS_S_PACKED uct_ib_iface_recv_desc_t;
-
 
 
 extern ucs_config_field_t uct_ib_iface_config_table[];
 extern const char *uct_ib_mtu_values[];
+
+
+void uct_ib_iface_recv_desc_init(uct_iface_h tl_iface, void *obj,
+                                 uct_mem_h memh);
 
 
 /**
@@ -519,7 +536,7 @@ static inline void* uct_ib_iface_recv_desc_hdr(uct_ib_iface_t *iface,
 
 typedef struct uct_ib_recv_wr {
     struct ibv_recv_wr ibwr;
-    struct ibv_sge     sg;
+    struct ibv_sge     sg[UCT_IB_RECV_SG_LIST_LEN];
 } uct_ib_recv_wr_t;
 
 /**
@@ -632,6 +649,14 @@ static UCS_F_ALWAYS_INLINE
 size_t uct_ib_iface_hdr_size(size_t max_inline, size_t min_size)
 {
     return (size_t)ucs_max((ssize_t)(max_inline - min_size), 0);
+}
+
+static UCS_F_ALWAYS_INLINE size_t
+uct_ib_iface_tl_hdr_length(uct_ib_iface_t *iface)
+{
+    return iface->config.rx_payload_offset -
+           iface->config.rx_hdr_offset +
+           iface->super.rx_allocator.config.header_length;
 }
 
 static UCS_F_ALWAYS_INLINE void

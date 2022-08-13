@@ -1,0 +1,20 @@
+diff a/src/uct/ib/rc/accel/rc_mlx5.inl b/src/uct/ib/rc/accel/rc_mlx5.inl	(rejected hunks)
+@@ -412,11 +416,16 @@ uct_rc_mlx5_iface_common_am_handler(uct_rc_mlx5_iface_common_t *iface,
+         rc_ops = ucs_derived_of(iface->super.super.ops, uct_rc_iface_ops_t);
+ 
+         /* coverity[overrun-buffer-val] */
+-        status = rc_ops->fc_handler(&iface->super, qp_num, &hdr->rc_hdr,
++        concatenated_hdr = ucs_alloca(byte_len);
++        memcpy(concatenated_hdr, hdr, sizeof(*hdr)+client_hdr_len);
++        memcpy(UCS_PTR_BYTE_OFFSET(concatenated_hdr, sizeof(*hdr)+client_hdr_len), payload, byte_len - sizeof(*hdr) - client_hdr_len);
++        status = rc_ops->fc_handler(&iface->super, qp_num, &concatenated_hdr->rc_hdr,
+                                     byte_len - sizeof(*hdr),
+                                     cqe->imm_inval_pkey, cqe->slid, flags);
+     } else {
+-        status = uct_iface_invoke_am(&iface->super.super.super, hdr->rc_hdr.am_id, hdr + 1, byte_len - sizeof(*hdr), flags, NULL);
++        params.field_mask = UCT_AM_CALLBACK_PARAM_FIELD_PAYLOAD;
++        params.payload    = payload;
++        status = uct_iface_invoke_am(&iface->super.super.super, hdr->rc_hdr.am_id, hdr + 1, byte_len - sizeof(*hdr), flags, &params);
+     }
+ 
+     uct_rc_mlx5_iface_release_srq_seg(iface, seg, cqe, wqe_ctr, status,

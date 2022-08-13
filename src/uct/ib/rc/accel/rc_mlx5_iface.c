@@ -555,7 +555,7 @@ out_tm_disabled:
 #endif
     init_attr->cq_len[UCT_IB_DIR_RX] = rc_config->super.rx.queue_len;
     init_attr->seg_size              = rc_config->super.seg_size;
-    iface->tm.mp.num_strides         = 1;
+    iface->tm.mp.num_strides         = UCT_IB_RECV_SG_LIST_LEN;
 
 #if IBV_HW_TM
 out_mp_disabled:
@@ -733,7 +733,8 @@ UCS_CLASS_INIT_FUNC(uct_rc_mlx5_iface_common_t, uct_iface_ops_t *tl_ops,
     self->tm.am_desc.super.cb = uct_rc_mlx5_release_desc;
 
     if (!UCT_RC_MLX5_MP_ENABLED(self)) {
-        self->tm.am_desc.offset = self->super.super.config.rx_headroom_offset;
+        self->tm.am_desc.offset         = self->super.super.config.rx_headroom_offset;
+        self->tm.am_desc.payload_offset = sizeof(uct_iface_recv_desc_t);
     }
 
     status = uct_ib_mlx5_iface_select_sl(&self->super.super,

@@ -162,17 +162,20 @@ enum ucp_feature {
  * present. It is used to enable backward compatibility support.
  */
 enum ucp_worker_params_field {
-    UCP_WORKER_PARAM_FIELD_THREAD_MODE  = UCS_BIT(0), /**< UCP thread mode */
-    UCP_WORKER_PARAM_FIELD_CPU_MASK     = UCS_BIT(1), /**< Worker's CPU bitmap */
-    UCP_WORKER_PARAM_FIELD_EVENTS       = UCS_BIT(2), /**< Worker's events bitmap */
-    UCP_WORKER_PARAM_FIELD_USER_DATA    = UCS_BIT(3), /**< User data */
-    UCP_WORKER_PARAM_FIELD_EVENT_FD     = UCS_BIT(4), /**< External event file
+    UCP_WORKER_PARAM_FIELD_THREAD_MODE    = UCS_BIT(0), /**< UCP thread mode */
+    UCP_WORKER_PARAM_FIELD_CPU_MASK       = UCS_BIT(1), /**< Worker's CPU bitmap */
+    UCP_WORKER_PARAM_FIELD_EVENTS         = UCS_BIT(2), /**< Worker's events bitmap */
+    UCP_WORKER_PARAM_FIELD_USER_DATA      = UCS_BIT(3), /**< User data */
+    UCP_WORKER_PARAM_FIELD_EVENT_FD       = UCS_BIT(4), /**< External event file
                                                            descriptor */
-    UCP_WORKER_PARAM_FIELD_FLAGS        = UCS_BIT(5), /**< Worker flags */
-    UCP_WORKER_PARAM_FIELD_NAME         = UCS_BIT(6), /**< Worker name */
-    UCP_WORKER_PARAM_FIELD_AM_ALIGNMENT = UCS_BIT(7), /**< Alignment of active
-                                                           messages on the receiver */
-    UCP_WORKER_PARAM_FIELD_CLIENT_ID    = UCS_BIT(8)  /**< Client id */
+    UCP_WORKER_PARAM_FIELD_FLAGS          = UCS_BIT(5), /**< Worker flags */
+    UCP_WORKER_PARAM_FIELD_NAME           = UCS_BIT(6), /**< Worker name */
+    UCP_WORKER_PARAM_FIELD_AM_ALIGNMENT   = UCS_BIT(7), /**< Alignment of active
+                                                             messages on the receiver */
+    UCP_WORKER_PARAM_FIELD_CLIENT_ID      = UCS_BIT(8), /**< Client id */
+    UCP_WORKER_PARAM_FIELD_USER_ALLOCATOR = UCS_BIT(9)  /**< Pass user allocator to worker
+                                                             to use for AM payload buffers.
+                                                             Supporting only rcx/dcx transports.*/
 };
 
 
@@ -1220,6 +1223,21 @@ typedef struct ucp_worker_attr {
 
 
 /**
+ * Get buffers and ucp memory handle from user allocator
+ *
+ * @param [in]  allocator_obj  User defined memory allocator object.
+ * @param [in]  num_of_buffers Num of buffers requested by client.
+ * @param [out] buffers        Array to fill with returned buffers.
+ * @param [out] memh           Buffer's UCP memory handle.
+ *
+ * @return number of allocated buffers or Error code as defined by @ref ucs_status_t
+ */
+typedef ssize_t (*ucp_mem_allocator_cb_t)(void *allocator_obj,
+                                          size_t num_of_buffers, void **buffers,
+                                          ucp_mem_h *memh);
+
+
+/**
  * @ingroup UCP_WORKER
  * @brief Tuning parameters for the UCP worker.
  *
@@ -1323,6 +1341,24 @@ typedef struct ucp_worker_params {
     * using @ref ucp_conn_request_query.
     */
     uint64_t                client_id;
+
+    /**
+     * User defined memory allocator
+     */
+    struct {
+        /**
+         * User memory allocator get buf function used by UCX in post receive. 
+         */
+        ucp_mem_allocator_cb_t cb;
+        /**
+         * argument to pass to memory allocator cb.
+         */
+        void                   *arg;
+        /**
+         * User memory allocator payload's buffer size.
+         */
+        size_t                 buffer_size;
+    } user_allocator;
 } ucp_worker_params_t;
 
 
@@ -1835,6 +1871,13 @@ struct ucp_am_recv_param {
      * Endpoint, which can be used for the reply to this message.
      */
     ucp_ep_h           reply_ep;
+
+    /**
+     * Pointer to UCP data_desc.
+     * User should pass this field as data_desc parameter
+     * when calling ucp_am_recv_data_nbx.
+     */
+    void               *data_desc;
 };
 
 
@@ -3943,6 +3986,7 @@ ucs_status_t ucp_ep_query(ucp_ep_h ep, ucp_ep_attr_t *attr);
  * @example ucp_client_server.c
  * UCP client / server example using different APIs (tag, stream, am) utility.
  */
+
 
 END_C_DECLS
 

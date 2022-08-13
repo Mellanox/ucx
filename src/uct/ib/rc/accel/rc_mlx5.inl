@@ -94,7 +94,7 @@ uct_rc_mlx5_iface_hold_srq_desc(uct_rc_mlx5_iface_common_t *iface,
     } else {
         udesc                = UCS_PTR_BYTE_OFFSET(seg->srq.desc, offset);
         uct_recv_desc(udesc) = release_desc;
-        seg->srq.ptr_mask   &= ~1;
+        seg->srq.ptr_mask   &= ~UCS_MASK(UCT_IB_RECV_SG_LIST_LEN);
         seg->srq.desc        = NULL;
     }
 }
@@ -395,15 +395,19 @@ uct_rc_mlx5_iface_common_am_handler(uct_rc_mlx5_iface_common_t *iface,
                                     uct_rc_mlx5_hdr_t *hdr, unsigned flags,
                                     unsigned byte_len, int poll_flags)
 {
+    uct_rc_mlx5_hdr_t *concatenated_hdr = hdr;
+    size_t client_hdr_len = iface->super.super.super.rx_allocator.config.header_length;
     uint16_t wqe_ctr;
     uct_rc_iface_ops_t *rc_ops;
     uct_ib_mlx5_srq_seg_t *seg;
     uint32_t qp_num;
     ucs_status_t status;
+    void *payload;
+    uct_am_callback_params_t params;
 
     wqe_ctr = ntohs(cqe->wqe_counter);
     seg     = uct_ib_mlx5_srq_get_wqe(&iface->rx.srq, wqe_ctr);
-
+    payload = seg->srq.desc->payload;
     uct_ib_mlx5_log_rx(&iface->super.super, cqe, hdr,
                        uct_rc_mlx5_common_packet_dump);
 
@@ -412,13 +416,16 @@ uct_rc_mlx5_iface_common_am_handler(uct_rc_mlx5_iface_common_t *iface,
         rc_ops = ucs_derived_of(iface->super.super.ops, uct_rc_iface_ops_t);
 
         /* coverity[overrun-buffer-val] */
-        status = rc_ops->fc_handler(&iface->super, qp_num, &hdr->rc_hdr,
-                                    byte_len - sizeof(*hdr),
-                                    cqe->imm_inval_pkey, cqe->slid, flags);
+        concatenated_hdr = ucs_alloca(byte_len);
+        memcpy(concatenated_hdr, hdr, sizeof(*hdr)+client_hdr_len);
+        memcpy(UCS_PTR_BYTE_OFFSET(concatenated_hdr, sizeof(*hdr)+client_hdr_len), payload, byte_len - sizeof(*hdr) - client_hdr_len);
+        status = rc_ops->fc_handler(&iface->super, qp_num, &concatenated_hdr->rc_hdr,
+                                     byte_len - sizeof(*hdr),
+                                     cqe->imm_inval_pkey, cqe->slid, flags);
     } else {
-        status = uct_iface_invoke_am(&iface->super.super.super, hdr->rc_hdr.am_id,
-                                     hdr + 1, byte_len - sizeof(*hdr),
-                                     flags, NULL);
+        params.field_mask = UCT_AM_CALLBACK_PARAM_FIELD_PAYLOAD;
+        params.payload    = payload;
+        status = uct_iface_invoke_am(&iface->super.super.super, hdr->rc_hdr.am_id, hdr + 1, byte_len - sizeof(*hdr), flags, &params);
     }
 
     uct_rc_mlx5_iface_release_srq_seg(iface, seg, cqe, wqe_ctr, status,
@@ -1411,6 +1418,24 @@ uct_rc_mlx5_iface_handle_filler_cqe(uct_rc_mlx5_iface_common_t *iface,
 #endif /* IBV_HW_TM */
 
 static UCS_F_ALWAYS_INLINE unsigned
+uct_rc_mlx5_iface_srq_common_post_recv(uct_rc_mlx5_iface_common_t *iface) {
+    if (UCT_RC_MLX5_MP_ENABLED(iface)) {
+        return uct_rc_mlx5_iface_srq_post_recv(iface);
+    } else {
+        return uct_rc_mlx5_iface_srq_post_recv_sge(iface);
+    }
+}
+
+static UCS_F_ALWAYS_INLINE unsigned
+uct_rc_mlx5_iface_srq_common_post_recv_ll(uct_rc_mlx5_iface_common_t *iface) {
+    if (UCT_RC_MLX5_MP_ENABLED(iface)) {
+        return uct_rc_mlx5_iface_srq_post_recv_ll(iface);
+    } else {
+        return uct_rc_mlx5_iface_srq_post_recv_ll_sge(iface);
+    }
+}
+
+static UCS_F_ALWAYS_INLINE unsigned
 uct_rc_mlx5_iface_common_poll_rx(uct_rc_mlx5_iface_common_t *iface,
                                  int poll_flags)
 {
@@ -1548,9 +1573,9 @@ out:
     max_batch = iface->super.super.config.rx_max_batch;
     if (ucs_unlikely(iface->super.rx.srq.available >= max_batch)) {
         if (poll_flags & UCT_RC_MLX5_POLL_FLAG_LINKED_LIST) {
-            uct_rc_mlx5_iface_srq_post_recv_ll(iface);
+            uct_rc_mlx5_iface_srq_common_post_recv_ll(iface);
         } else {
-            uct_rc_mlx5_iface_srq_post_recv(iface);
+            uct_rc_mlx5_iface_srq_common_post_recv(iface);
         }
     }
     return count;
@@ -1820,3 +1845,20 @@ uct_rc_mlx5_iface_common_atomic_data(unsigned opcode, unsigned size, uint64_t va
     return UCS_OK;
 }
 
+static void UCS_F_ALWAYS_INLINE
+uct_ib_mlx5_srq_buff_init_common(uct_rc_mlx5_iface_common_t *iface, uint32_t head, uint32_t tail) {
+    const size_t hdr_len = uct_ib_iface_tl_hdr_length(&iface->super.super);
+    size_t sge_sizes[UCT_IB_RECV_SG_LIST_LEN];
+
+    if (UCT_RC_MLX5_MP_ENABLED(iface)) {
+        uct_ib_mlx5_srq_buff_init(&iface->rx.srq, head, tail,
+                                  iface->super.super.config.seg_size,
+                                  iface->tm.mp.num_strides);
+    } else {
+        sge_sizes[UCT_IB_RX_SG_TL_HEADER_IDX] = hdr_len;
+        sge_sizes[UCT_IB_RX_SG_PAYLOAD_IDX] =
+                iface->super.super.super.rx_allocator.config.size;
+        uct_ib_mlx5_srq_buff_init_sg(&iface->rx.srq, head, tail, sge_sizes,
+                                     iface->tm.mp.num_strides);
+    }
+}
