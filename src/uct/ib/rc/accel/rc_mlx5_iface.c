@@ -733,7 +733,7 @@ UCS_CLASS_INIT_FUNC(uct_rc_mlx5_iface_common_t, uct_iface_ops_t *tl_ops,
     self->tm.am_desc.super.cb = uct_rc_mlx5_release_desc;
 
     if (!UCT_RC_MLX5_MP_ENABLED(self)) {
-        self->tm.am_desc.offset         = self->super.super.config.rx_headroom_offset;
+        self->tm.am_desc.offset = self->super.super.config.rx_headroom_offset;
         self->tm.am_desc.payload_offset = sizeof(uct_iface_recv_desc_t);
     }
 

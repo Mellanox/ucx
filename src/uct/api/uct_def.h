@@ -108,7 +108,7 @@ typedef struct uct_tag_context       uct_tag_context_t;
 typedef uint64_t                     uct_tag_t;  /* tag type - 64 bit */
 typedef int                          uct_worker_cb_id_t;
 typedef void*                        uct_conn_request_h;
-typedef struct uct_rx_allocator      uct_rx_allocator_t;
+typedef struct uct_rx_allocator uct_rx_allocator_t;
 
 /**
  * @}
@@ -543,8 +543,8 @@ typedef struct uct_am_callback_params {
  *                          released later by their owner.
  *
  */
-typedef ucs_status_t (*uct_am_callback_t)(void *arg, void *msg_hdr, size_t length,
-                                          unsigned flags,
+typedef ucs_status_t (*uct_am_callback_t)(void *arg, void *msg_hdr,
+                                          size_t length, unsigned flags,
                                           uct_am_callback_params_t *params);
 
 
@@ -947,8 +947,10 @@ typedef void (*uct_async_event_cb_t)(void *arg, unsigned flags);
  *
  * @return            Error code as defined by @ref ucs_status_t
  */
-typedef ssize_t (*uct_user_allocator_get_buf_cb_t)(
-        void *arg, size_t num_of_buffers, uct_mem_h *memh, void **buffers);
+typedef ssize_t (*uct_user_allocator_get_buf_cb_t)(void *arg,
+                                                   size_t num_of_buffers,
+                                                   uct_mem_h *memh,
+                                                   void **buffers);
 
 
 #endif

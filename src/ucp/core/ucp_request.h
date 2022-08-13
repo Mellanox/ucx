@@ -477,9 +477,9 @@ struct ucp_recv_desc {
         ucs_queue_elem_t    am_mid_queue;        /* AM middle fragments queue */
     };
     union {
-        uint32_t payload_offset; /* Offset from end of the
-                                    descriptor to AM data */
-        void     *payload;       /* pointer to payload */
+        uint32_t            payload_offset;      /* Offset from end of the
+                                                    descriptor to AM data */
+        void                *payload;            /* pointer to payload */
     };
     uint32_t                length;              /* Received length */
     uint16_t                flags;               /* Flags */

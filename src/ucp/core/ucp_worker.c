@@ -899,8 +899,9 @@ static UCS_F_ALWAYS_INLINE uct_mem_h ucp_worker_get_uct_memh(
     return ucp_memh->uct[uct_memh_idx_mem[md_index]];
 }
 
-UCS_PROFILE_FUNC(ssize_t, ucp_worker_user_allocator_get_cb, (arg, num_of_buffers, memh, buffers),
-                 void *arg, size_t num_of_buffers, uct_mem_h *memh, void **buffers)
+UCS_PROFILE_FUNC(ssize_t, ucp_worker_user_allocator_get_cb,
+                 (arg, num_of_buffers, memh, buffers), void *arg,
+                 size_t num_of_buffers, uct_mem_h *memh, void **buffers)
 {
     const ucp_worker_iface_t *wiface = (ucp_worker_iface_t*)arg;
     const ucp_worker_h worker        = wiface->worker;
@@ -914,8 +915,8 @@ UCS_PROFILE_FUNC(ssize_t, ucp_worker_user_allocator_get_cb, (arg, num_of_buffers
     assert(memh != NULL);
 
     ret = worker->user_mem_allocator.get_buf(worker->user_mem_allocator.obj,
-                                             num_of_buffers,
-                                             buffers, &ucp_memh);
+                                             num_of_buffers, buffers,
+                                             &ucp_memh);
 
     if (ucs_unlikely(ret <= 0)) {
         return ret;

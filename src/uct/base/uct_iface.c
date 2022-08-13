@@ -490,7 +490,8 @@ UCS_CLASS_CLEANUP_FUNC(uct_iface_t)
 UCS_CLASS_DEFINE(uct_iface_t, void);
 
 static ssize_t
-uct_base_iface_default_get_buff_cb(void *arg, size_t num_of_buffers, uct_mem_h *memh, void **buffers)
+uct_base_iface_default_get_buff_cb(void *arg, size_t num_of_buffers,
+                                   uct_mem_h *memh, void **buffers)
 {
     ucs_mpool_t *mp = arg;
     uct_iface_recv_desc_t *obj;
@@ -518,7 +519,7 @@ uct_base_iface_init_rx_buffers_allocator(uct_base_iface_t *iface,
     iface->rx_allocator.config.size              = 8192;
     iface->rx_allocator.config.default_allocator = 1;
     iface->rx_allocator.config.allocator.arg     = NULL;
-    iface->rx_allocator.config.allocator.cb      = uct_base_iface_default_get_buff_cb;
+    iface->rx_allocator.config.allocator.cb = uct_base_iface_default_get_buff_cb;
 
     if ((params->field_mask &
          UCT_IFACE_PARAM_FIELD_USER_ALLOCATOR_HEADER_LEN) != 0) {

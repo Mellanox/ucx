@@ -427,8 +427,8 @@ ucs_status_t uct_rc_iface_fc_handler(uct_rc_iface_t *iface, unsigned qp_num,
 
 out:
     return uct_iface_invoke_am(&iface->super.super,
-                               (hdr->am_id & ~UCT_RC_EP_FC_MASK),
-                               hdr + 1, length, flags, NULL);
+                               (hdr->am_id & ~UCT_RC_EP_FC_MASK), hdr + 1,
+                               length, flags, NULL);
 }
 
 static ucs_status_t uct_rc_iface_tx_ops_init(uct_rc_iface_t *iface)
@@ -596,17 +596,19 @@ uct_rc_iface_recv_sg_mpools_init(uct_ib_iface_t *iface,
                                   uct_ib_iface_recv_desc_init, name);
 
     if ((params->field_mask & UCT_IFACE_PARAM_FIELD_USER_ALLOCATOR) == 0) {
-        status = uct_iface_mpool_init(&iface->super,
-                                      &mp[UCT_IB_RX_SG_PAYLOAD_IDX],
-                                      sizeof(uct_iface_recv_desc_t) + iface->super.rx_allocator.config.size,
-                                      0, UCS_SYS_CACHE_LINE_SIZE, &config->rx.mp,
-                                      grow, uct_iface_recv_desc_init, name);
+        status = uct_iface_mpool_init(
+                &iface->super, &mp[UCT_IB_RX_SG_PAYLOAD_IDX],
+                sizeof(uct_iface_recv_desc_t) +
+                        iface->super.rx_allocator.config.size,
+                0, UCS_SYS_CACHE_LINE_SIZE, &config->rx.mp, grow,
+                uct_iface_recv_desc_init, name);
 
         if (status != UCS_OK) {
             return status;
         }
 
-        iface->super.rx_allocator.config.allocator.arg = &mp[UCT_IB_RX_SG_PAYLOAD_IDX];
+        iface->super.rx_allocator.config.allocator.arg =
+                &mp[UCT_IB_RX_SG_PAYLOAD_IDX];
     }
 
     return status;
