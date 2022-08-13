@@ -196,9 +196,8 @@ uct_rc_mlx5_devx_init_rx_common(uct_rc_mlx5_iface_common_t *iface,
     }
 
     iface->rx.srq.type = UCT_IB_MLX5_OBJ_TYPE_DEVX;
-    uct_ib_mlx5_srq_buff_init(&iface->rx.srq, 0, max - 1,
-                              iface->super.super.config.seg_size,
-                              iface->tm.mp.num_strides);
+
+    uct_ib_mlx5_srq_buff_init_common(iface, 0, max - 1);
     iface->super.rx.srq.quota = max - 1;
 
     return UCS_OK;

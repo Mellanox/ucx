@@ -222,12 +222,14 @@ int uct_ib_iface_is_ib(uct_ib_iface_t *iface)
                                     iface->config.port_num);
 }
 
-static void
-uct_ib_iface_recv_desc_init(uct_iface_h tl_iface, void *obj, uct_mem_h memh)
+void uct_ib_iface_recv_desc_init(uct_iface_h tl_iface, void *obj,
+                                 uct_mem_h memh)
 {
     uct_ib_iface_recv_desc_t *desc = obj;
 
-    desc->lkey = uct_ib_memh_get_lkey(memh);
+    desc->header_lkey  = uct_ib_memh_get_lkey(memh);
+    desc->payload_lkey = 0;
+    desc->payload      = NULL;
 }
 
 ucs_status_t uct_ib_iface_recv_mpool_init(uct_ib_iface_t *iface,
@@ -1296,6 +1298,10 @@ UCS_CLASS_INIT_FUNC(uct_ib_iface_t, uct_iface_ops_t *tl_ops,
     self->release_desc.cb           = uct_ib_iface_release_desc;
     self->config.qp_type            = init_attr->qp_type;
     uct_ib_iface_set_path_mtu(self, config);
+    self->super.rx_allocator.config.size =
+            self->super.rx_allocator.config.size ?
+                    self->super.rx_allocator.config.size :
+                    (init_attr->seg_size - init_attr->rx_hdr_len);
 
     if (ucs_derived_of(worker, uct_priv_worker_t)->thread_mode == UCS_THREAD_MODE_MULTI) {
         ucs_error("IB transports do not support multi-threaded worker");
@@ -1422,12 +1428,16 @@ int uct_ib_iface_prepare_rx_wrs(uct_ib_iface_t *iface, ucs_mpool_t *mp,
     count = 0;
     while (count < n) {
         UCT_TL_IFACE_GET_RX_DESC(&iface->super, mp, desc, break);
-        wrs[count].sg.addr   = (uintptr_t)uct_ib_iface_recv_desc_hdr(iface, desc);
-        wrs[count].sg.length = iface->config.seg_size;
-        wrs[count].sg.lkey   = desc->lkey;
+        desc->payload = UCS_PTR_BYTE_OFFSET(desc,
+                                            iface->config.rx_payload_offset);
+        wrs[count].sg[UCT_IB_RX_SG_TL_HEADER_IDX].addr = (uintptr_t)
+                uct_ib_iface_recv_desc_hdr(iface, desc);
+        wrs[count].sg[UCT_IB_RX_SG_TL_HEADER_IDX].length =
+                iface->config.seg_size;
+        wrs[count].sg[UCT_IB_RX_SG_TL_HEADER_IDX].lkey = desc->header_lkey;
         wrs[count].ibwr.num_sge = 1;
         wrs[count].ibwr.wr_id   = (uintptr_t)desc;
-        wrs[count].ibwr.sg_list = &wrs[count].sg;
+        wrs[count].ibwr.sg_list = wrs[count].sg;
         wrs[count].ibwr.next    = &wrs[count + 1].ibwr;
         ++count;
     }

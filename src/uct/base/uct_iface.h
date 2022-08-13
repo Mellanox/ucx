@@ -256,6 +256,12 @@ typedef struct uct_iface_internal_ops {
     uct_ep_invalidate_func_t       ep_invalidate;
 } uct_iface_internal_ops_t;
 
+typedef struct uct_iface_recv_desc {
+    uct_mem_h uct_memh;
+} UCS_S_PACKED uct_iface_recv_desc_t;
+
+void uct_iface_recv_desc_init(uct_iface_h tl_iface, void *obj, uct_mem_h memh);
+
 
 /**
  * Base structure of all interfaces.
@@ -282,6 +288,22 @@ typedef struct uct_base_iface {
         ucs_log_level_t      failure_level;
         size_t               max_num_eps;
     } config;
+
+    struct {
+        struct {
+            size_t             header_length;
+            size_t             size;
+            uct_rx_allocator_t allocator;
+            int                default_allocator;
+        } config;
+
+        struct {
+            uct_mem_h memh;
+            size_t    ready_idx;
+            size_t    available;
+            void      *buffers_cache[UCT_ALLOCATOR_MAX_RX_BUFFS];
+        } cache;
+    } rx_allocator;
 
     UCS_STATS_NODE_DECLARE(stats)            /* Statistics */
 } uct_base_iface_t;
@@ -882,9 +904,8 @@ static inline ucs_status_t uct_iface_invoke_am(uct_base_iface_t *iface,
 
     handler = &iface->am[id];
     status  = handler->cb(handler->arg, msg_hdr, length, flags, params);
-    ucs_assertv((status == UCS_OK) ||
-                ((status == UCS_INPROGRESS) && (flags &
-                                                UCT_CB_PARAM_FLAG_DESC)),
+    ucs_assertv((status == UCS_OK) || ((status == UCS_INPROGRESS) &&
+                                       (flags & UCT_CB_PARAM_FLAG_DESC)),
                 "%s(arg=%p msg_hdr=%p length=%u flags=0x%x) returned %s",
                 ucs_debug_get_symbol_name((void*)handler->cb), handler->arg,
                 msg_hdr, length, flags, ucs_status_string(status));
@@ -1008,6 +1029,59 @@ static UCS_F_ALWAYS_INLINE int uct_ep_op_is_fetch(uct_ep_operation_t op)
                           UCS_BIT(UCT_EP_OP_GET_BCOPY) |
                           UCS_BIT(UCT_EP_OP_GET_ZCOPY) |
                           UCS_BIT(UCT_EP_OP_ATOMIC_FETCH));
+}
+
+/**
+ * Check if rx_allocator cache is empty
+ */
+#define uct_iface_rx_allocator_is_empty(_rx_allocator) \
+    (_rx_allocator.cache.ready_idx == _rx_allocator.cache.available)
+
+/**
+ * Call rx allocator cb to fill the rx_allocator cache
+ */
+static UCS_F_ALWAYS_INLINE ucs_status_t
+uct_iface_rx_allocator_get_buffers(uct_base_iface_t *base_iface)
+{
+    ssize_t num_of_alloc;
+
+    ucs_assert(uct_iface_rx_allocator_is_empty(base_iface->rx_allocator));
+    num_of_alloc = base_iface->rx_allocator.config.allocator.cb(
+            base_iface->rx_allocator.config.allocator.arg,
+            UCT_ALLOCATOR_MAX_RX_BUFFS, &base_iface->rx_allocator.cache.memh,
+            base_iface->rx_allocator.cache.buffers_cache);
+
+    base_iface->rx_allocator.cache.ready_idx = 0;
+    if (ucs_unlikely(UCS_STATUS_IS_ERR(num_of_alloc) || (num_of_alloc == 0))) {
+        base_iface->rx_allocator.cache.available = 0;
+        return UCS_ERR_NO_MEMORY;
+    }
+    base_iface->rx_allocator.cache.available = num_of_alloc;
+
+    return UCS_OK;
+}
+
+/**
+ * Return buffer from the rx_allocator cache
+ */
+static UCS_F_ALWAYS_INLINE void *
+uct_iface_rx_allocator_get_buffer(uct_base_iface_t *base_iface)
+{
+    void *buff;
+    ucs_assert(!uct_iface_rx_allocator_is_empty(base_iface->rx_allocator));
+    buff = base_iface->rx_allocator.cache
+                   .buffers_cache[base_iface->rx_allocator.cache.ready_idx];
+    base_iface->rx_allocator.cache.ready_idx++;
+    return buff;
+}
+
+/**
+ * Return rx_allocator memh
+ */
+static UCS_F_ALWAYS_INLINE uct_mem_h
+uct_iface_rx_allocator_get_memh(uct_base_iface_t *base_iface)
+{
+    return base_iface->rx_allocator.cache.memh;
 }
 
 #endif
