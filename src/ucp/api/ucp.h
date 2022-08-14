@@ -1225,16 +1225,19 @@ typedef struct ucp_worker_attr {
 /**
  * Get buffers and ucp memory handle from user allocator
  *
- * @param [in]  allocator_obj  User defined memory allocator object.
- * @param [in]  num_of_buffers Num of buffers requested by client.
+ * @param [in]  arg            User-defined argument for the allocator callback.
+ * @param [in]  num_of_buffers Num of buffers requested by UCP layer.
+ *                             This is the maximal capacity of buffers array.
  * @param [out] buffers        Array to fill with returned buffers.
- * @param [out] memh           Buffer's UCP memory handle.
+ * @param [out] memh           Memory handle associated with the returned buffers.
+ *                             @note It's assumed that all buffers returned by 
+ *                             this callback share the same memory handle
  *
- * @return number of allocated buffers or Error code as defined by @ref ucs_status_t
+ * @return                     Number of allocated buffers if successful.
+ *                             In case of an error return 0.
  */
-typedef ssize_t (*ucp_mem_allocator_cb_t)(void *allocator_obj,
-                                          size_t num_of_buffers, void **buffers,
-                                          ucp_mem_h *memh);
+typedef size_t (*ucp_mem_allocator_cb_t)(void *arg, size_t num_of_buffers,
+                                         void **buffers, ucp_mem_h *memh);
 
 
 /**
@@ -1350,10 +1353,12 @@ typedef struct ucp_worker_params {
          * User memory allocator get buf function used by UCX in post receive. 
          */
         ucp_mem_allocator_cb_t cb;
+
         /**
-         * argument to pass to memory allocator cb.
+         * User-defined argument for the allocator callback.
          */
         void                   *arg;
+
         /**
          * User memory allocator payload's buffer size.
          */
@@ -1873,11 +1878,10 @@ struct ucp_am_recv_param {
     ucp_ep_h           reply_ep;
 
     /**
-     * Pointer to UCP data_desc.
-     * User should pass this field as data_desc parameter
-     * when calling ucp_am_recv_data_nbx.
+     * Payload of the received message.
+     * Relevant only for eager protocols.
      */
-    void               *data_desc;
+    void               *payload;
 };
 
 
@@ -3986,7 +3990,6 @@ ucs_status_t ucp_ep_query(ucp_ep_h ep, ucp_ep_attr_t *attr);
  * @example ucp_client_server.c
  * UCP client / server example using different APIs (tag, stream, am) utility.
  */
-
 
 END_C_DECLS
 

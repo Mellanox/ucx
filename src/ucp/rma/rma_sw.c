@@ -308,10 +308,9 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_get_rep_handler,
     return UCS_OK;
 }
 
-static void ucp_rma_sw_dump_packet(ucp_worker_h worker,
-                                   uct_am_trace_type_t type, uint8_t id,
-                                   const void *data, const void *payload,
-                                   size_t length, char *buffer, size_t max)
+static void ucp_rma_sw_dump_packet(ucp_worker_h worker, uct_am_trace_type_t type,
+                                   uint8_t id, const void *data, size_t length,
+                                   char *buffer, size_t max)
 {
     const ucp_get_req_hdr_t *geth;
     const ucp_rma_rep_hdr_t *reph;
