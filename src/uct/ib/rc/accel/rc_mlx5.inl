@@ -396,7 +396,7 @@ uct_rc_mlx5_iface_common_am_handler(uct_rc_mlx5_iface_common_t *iface,
                                     unsigned byte_len, int poll_flags)
 {
     uct_rc_mlx5_hdr_t *concatenated_hdr = hdr;
-    size_t client_hdr_len = iface->super.super.super.rx_allocator.config.header_length;
+    size_t client_hdr_len = iface->super.super.super.rx_allocator.header_length;
     uint16_t wqe_ctr;
     uct_rc_iface_ops_t *rc_ops;
     uct_ib_mlx5_srq_seg_t *seg;
@@ -404,6 +404,7 @@ uct_rc_mlx5_iface_common_am_handler(uct_rc_mlx5_iface_common_t *iface,
     ucs_status_t status;
     void *payload;
     uct_am_callback_params_t params;
+    size_t tl_desc_hdr_part_length;
 
     wqe_ctr = ntohs(cqe->wqe_counter);
     seg     = uct_ib_mlx5_srq_get_wqe(&iface->rx.srq, wqe_ctr);
@@ -416,9 +417,12 @@ uct_rc_mlx5_iface_common_am_handler(uct_rc_mlx5_iface_common_t *iface,
         rc_ops = ucs_derived_of(iface->super.super.ops, uct_rc_iface_ops_t);
 
         /* coverity[overrun-buffer-val] */
-        concatenated_hdr = ucs_alloca(byte_len);
-        memcpy(concatenated_hdr, hdr, sizeof(*hdr)+client_hdr_len);
-        memcpy(UCS_PTR_BYTE_OFFSET(concatenated_hdr, sizeof(*hdr)+client_hdr_len), payload, byte_len - sizeof(*hdr) - client_hdr_len);
+        tl_desc_hdr_part_length = sizeof(*hdr) + client_hdr_len;
+        concatenated_hdr        = ucs_alloca(byte_len);
+        memcpy(concatenated_hdr, hdr, tl_desc_hdr_part_length);
+        if (byte_len > tl_desc_hdr_part_length) {
+            memcpy(UCS_PTR_BYTE_OFFSET(concatenated_hdr, tl_desc_hdr_part_length), payload, byte_len - tl_desc_hdr_part_length);
+        }
         status = rc_ops->fc_handler(&iface->super, qp_num, &concatenated_hdr->rc_hdr,
                                      byte_len - sizeof(*hdr),
                                      cqe->imm_inval_pkey, cqe->slid, flags);
@@ -1857,8 +1861,53 @@ uct_ib_mlx5_srq_buff_init_common(uct_rc_mlx5_iface_common_t *iface, uint32_t hea
     } else {
         sge_sizes[UCT_IB_RX_SG_TL_HEADER_IDX] = hdr_len;
         sge_sizes[UCT_IB_RX_SG_PAYLOAD_IDX] =
-                iface->super.super.super.rx_allocator.config.size;
+                iface->super.super.super.rx_allocator.payload_length;
         uct_ib_mlx5_srq_buff_init_sg(&iface->rx.srq, head, tail, sge_sizes,
                                      iface->tm.mp.num_strides);
     }
+}
+
+/**
+ * Check if rx_allocator cache is empty
+ */
+UCS_F_ALWAYS_INLINE int
+uct_rc_mlx5_rx_allocator_iface_is_empty(uct_base_iface_t *base_iface)
+{
+    return (base_iface->rx_allocator.cache.ready_idx == base_iface->rx_allocator.cache.available);
+}
+
+/**
+ * Call rx allocator cb to fill the rx_allocator cache
+ * with new available buffers.
+ */
+UCS_F_ALWAYS_INLINE ucs_status_t
+uct_rc_mlx5_rx_allocator_iface_get_buffers(uct_base_iface_t *base_iface)
+{
+    ssize_t num_allocated;
+
+    ucs_assert(uct_rc_mlx5_rx_allocator_iface_is_empty(base_iface));
+    num_allocated = base_iface->rx_allocator.allocator.cb(
+            base_iface->rx_allocator.allocator.arg,
+            UCT_ALLOCATOR_MAX_RX_BUFFS, &base_iface->rx_allocator.cache.memh,
+            base_iface->rx_allocator.cache.buffers);
+
+    base_iface->rx_allocator.cache.ready_idx = 0;
+    base_iface->rx_allocator.cache.available = num_allocated;
+
+    return UCS_OK;
+}
+
+/**
+ * Return buffer from the rx_allocator cache
+ */
+UCS_F_ALWAYS_INLINE void *
+uct_rc_mlx5_rx_allocator_iface_get_buffer(uct_base_iface_t *base_iface)
+{
+    void *buff;
+
+    ucs_assert(!uct_rc_mlx5_rx_allocator_iface_is_empty(base_iface));
+    buff = base_iface->rx_allocator.cache
+                   .buffers[base_iface->rx_allocator.cache.ready_idx];
+    base_iface->rx_allocator.cache.ready_idx++;
+    return buff;
 }

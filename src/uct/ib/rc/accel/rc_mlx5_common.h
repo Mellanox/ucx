@@ -321,7 +321,6 @@ void uct_rc_mlx5_release_desc(uct_recv_desc_t *self, void *desc);
 typedef struct uct_rc_mlx5_release_desc {
     uct_recv_desc_t             super;
     unsigned                    offset;
-    unsigned                    payload_offset;
 } uct_rc_mlx5_release_desc_t;
 
 

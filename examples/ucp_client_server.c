@@ -48,6 +48,8 @@
 #define PRINT_INTERVAL         2000
 #define DEFAULT_NUM_ITERATIONS 1
 #define TEST_AM_ID             0
+#define ALLOCATOR_NUM_OF_BUFFERS 32768
+#define ALLOCATOR_PAYLOAD_LENGTH 8192
 
 
 static long test_string_length = 16;
@@ -93,7 +95,6 @@ static struct {
     int          is_rndv;
     void         *desc;
     void         *recv_buf;
-    void         *data_desc;
 } am_data_desc = {0, 0, NULL, NULL};
 
 
@@ -105,7 +106,8 @@ static void usage(void);
 /* 
  * User memory allocator put
  */
-static void mpool_allocator_put(void *obj);
+//TODO - maybe remove
+/* static void mpool_allocator_put(void *obj); */
 
 void buffer_free(ucp_dt_iov_t *iov)
 {
@@ -184,7 +186,6 @@ static void am_recv_cb(void *request, ucs_status_t status, size_t length,
                        void *user_data)
 {
     common_cb(user_data, "am_recv_cb");
-    mpool_allocator_put(am_data_desc.desc);
 }
 
 /**
@@ -503,9 +504,8 @@ ucs_status_t ucp_am_data_cb(void *arg, const void *header, size_t header_length,
          * which has to be passed to ucp_am_recv_data_nbx function to confirm
          * data transfer.
          */
-        am_data_desc.is_rndv   = 1;
-        am_data_desc.desc      = data;
-        am_data_desc.data_desc = param->data_desc;
+        am_data_desc.is_rndv = 1;
+        am_data_desc.desc    = data;
         return UCS_INPROGRESS;
     }
 
@@ -565,7 +565,7 @@ static int send_recv_am(ucp_worker_h ucp_worker, ucp_ep_h ep, int is_server,
             params.op_attr_mask |= UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
             params.cb.recv_am    = am_recv_cb,
             request              = ucp_am_recv_data_nbx(ucp_worker,
-                                                        am_data_desc.data_desc,
+                                                        am_data_desc.desc,
                                                         msg, msg_length,
                                                         &params);
         } else {
@@ -762,21 +762,19 @@ static int client_server_communication(ucp_worker_h worker, ucp_ep_h ep,
  * Implementation of memory allocator based on ucs mpool
  * following new user memory allocator API
  */
-#define ALLOCATOR_NUM_OF_BUFFERS 32768
-#define ALLOCATOR_PAYLOAD_LENGTH 4096
 typedef struct mpool_allocator_obj {
     ucs_mpool_t   mpool;
     ucp_context_h context;
     size_t        payload_length;
     ucp_mem_h memh;
-} mpool_allocator_obj_t;
+} ucp_worker_mpool_allocator_obj_t;
 
 ucs_status_t
 mpool_allocator_chunk_alloc(ucs_mpool_t *mp, size_t *size_p, void **chunk_p)
 {
-    mpool_allocator_obj_t *allocator       = (mpool_allocator_obj_t*)mp;
-    const ucp_context_h context            = allocator->context;
-    ucp_mem_h memh                         = NULL;
+    ucp_worker_mpool_allocator_obj_t *allocator = (ucp_worker_mpool_allocator_obj_t*)mp;
+    const ucp_context_h context                 = allocator->context;
+    ucp_mem_h memh                              = NULL;
     ucs_status_t status;
     ucp_mem_map_params_t params;
     size_t chunk_size;
@@ -788,22 +786,22 @@ mpool_allocator_chunk_alloc(ucs_mpool_t *mp, size_t *size_p, void **chunk_p)
                         UCP_MEM_MAP_PARAM_FIELD_FLAGS;
     params.length     = chunk_size;
     params.address    = malloc(chunk_size);
-    if (ucs_unlikely(params.address == NULL)) {
+    if (params.address == NULL) {
         return UCS_ERR_NO_MEMORY;
     }
 
     status = ucp_mem_map(context, &params, &memh);
-    if (ucs_unlikely(status != UCS_OK)) {
+    if (status != UCS_OK) {
         return status;
     }
 
     memh_attr.field_mask = UCP_MEM_ATTR_FIELD_ADDRESS;
     status               = ucp_mem_query(memh, &memh_attr);
-    if (ucs_unlikely(status != UCS_OK)) {
+    if (status != UCS_OK) {
         return status;
     }
 
-    ucs_assert(allocator->memh == NULL);
+    ucs_assertv(allocator->memh == NULL, "more than one chunk was allocated");
     allocator->memh = memh;
 
     *chunk_p        = memh_attr.address;
@@ -812,7 +810,7 @@ mpool_allocator_chunk_alloc(ucs_mpool_t *mp, size_t *size_p, void **chunk_p)
 
 void mpool_allocator_chunk_release(ucs_mpool_t *mp, void *chunk)
 {
-    const mpool_allocator_obj_t *allocator = (mpool_allocator_obj_t*)mp;
+    const ucp_worker_mpool_allocator_obj_t *allocator = (ucp_worker_mpool_allocator_obj_t*)mp;
     ucp_mem_attr_t memh_attr;
 
     memh_attr.field_mask = UCP_MEM_ATTR_FIELD_ADDRESS;
@@ -831,10 +829,10 @@ static ucs_mpool_ops_t mpool_allocator_ops = {
 
 ucs_status_t mpool_allocator_init(ucp_context_h context,
                                   const size_t buffer_size,
-                                  mpool_allocator_obj_t **allocator_obj)
+                                  ucp_worker_mpool_allocator_obj_t **allocator_obj)
 {
-    mpool_allocator_obj_t *allocator = (mpool_allocator_obj_t*)malloc(
-            sizeof(mpool_allocator_obj_t));
+    ucp_worker_mpool_allocator_obj_t *allocator = (ucp_worker_mpool_allocator_obj_t*)malloc(
+            sizeof(ucp_worker_mpool_allocator_obj_t));
     ucs_mpool_params_t mp_params;
     ucs_status_t status;
 
@@ -861,12 +859,12 @@ ucs_status_t mpool_allocator_init(ucp_context_h context,
     return UCS_OK;
 }
 
-static ssize_t mpool_allocator_get(void *allocator_obj, size_t num_of_buffers,
+static size_t mpool_allocator_get(void *allocator_obj, size_t num_of_buffers,
                                    void **buffers, ucp_mem_h *memh)
 {
-    mpool_allocator_obj_t *allocator = (mpool_allocator_obj_t*)allocator_obj;
+    ucp_worker_mpool_allocator_obj_t *allocator = (ucp_worker_mpool_allocator_obj_t*)allocator_obj;
     void *obj;
-    ssize_t buff_idx;
+    size_t buff_idx;
 
     for (buff_idx = 0; buff_idx < num_of_buffers; buff_idx++) {
         obj = ucs_mpool_get(&allocator->mpool);
@@ -881,12 +879,13 @@ static ssize_t mpool_allocator_get(void *allocator_obj, size_t num_of_buffers,
     return buff_idx;
 }
 
-static void mpool_allocator_put(void *obj)
+//TODO - maybe remove
+/* static void mpool_allocator_put(void *obj)
 {
     ucs_mpool_put((void*)obj);
-}
+} */
 
-void mpool_allocator_clean(mpool_allocator_obj_t *allocator)
+void mpool_allocator_clean(ucp_worker_mpool_allocator_obj_t *allocator)
 {
     ucs_mpool_cleanup(&allocator->mpool, 0);
     if (allocator) {
@@ -898,7 +897,7 @@ void mpool_allocator_clean(mpool_allocator_obj_t *allocator)
  * Create a ucp worker on the given ucp context.
  */
 static int init_worker(ucp_context_h ucp_context, ucp_worker_h *ucp_worker,
-                       mpool_allocator_obj_t *allocator_obj)
+                       ucp_worker_mpool_allocator_obj_t *allocator_obj)
 {
     ucp_worker_params_t worker_params;
     ucs_status_t status;
@@ -1061,16 +1060,15 @@ out:
 static int run_server(ucp_context_h ucp_context, ucp_worker_h ucp_worker,
                       char *listen_addr, send_recv_type_t send_recv_type)
 {
-    mpool_allocator_obj_t *allocator_obj = NULL;
-    const size_t payload_length          = ALLOCATOR_PAYLOAD_LENGTH;
-    ucx_server_ctx_t context;
-    ucp_worker_h     ucp_data_worker;
+    ucp_worker_mpool_allocator_obj_t *allocator_obj = NULL;
+    ucx_server_ctx_t       context;
+    ucp_worker_h           ucp_data_worker;
     ucp_am_handler_param_t param;
-    ucp_ep_h         server_ep;
-    ucs_status_t     status;
-    int              ret;
+    ucp_ep_h               server_ep;
+    ucs_status_t           status;
+    int                    ret;
 
-    status = mpool_allocator_init(ucp_context, payload_length, &allocator_obj);
+    status = mpool_allocator_init(ucp_context, ALLOCATOR_PAYLOAD_LENGTH, &allocator_obj);
     if (status != UCS_OK) {
         fprintf(stderr, "failed to create memory allocator (%s)\n",
                 ucs_status_string(status));

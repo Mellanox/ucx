@@ -617,72 +617,72 @@ enum uct_iface_open_mode {
  */
 enum uct_iface_params_field {
     /** Enables @ref uct_iface_params_t::cpu_mask */
-    UCT_IFACE_PARAM_FIELD_CPU_MASK                   = UCS_BIT(0),
+    UCT_IFACE_PARAM_FIELD_CPU_MASK           = UCS_BIT(0),
 
     /** Enables @ref uct_iface_params_t::open_mode */
-    UCT_IFACE_PARAM_FIELD_OPEN_MODE                  = UCS_BIT(1),
+    UCT_IFACE_PARAM_FIELD_OPEN_MODE          = UCS_BIT(1),
 
     /** Enables @ref uct_iface_params_t_mode_device
      *  "uct_iface_params_t::mode::device" */
-    UCT_IFACE_PARAM_FIELD_DEVICE                     = UCS_BIT(2),
+    UCT_IFACE_PARAM_FIELD_DEVICE             = UCS_BIT(2),
 
     /** Enables @ref uct_iface_params_t_mode_sockaddr
      *  "uct_iface_params_t::mode::sockaddr" */
-    UCT_IFACE_PARAM_FIELD_SOCKADDR                   = UCS_BIT(3),
+    UCT_IFACE_PARAM_FIELD_SOCKADDR           = UCS_BIT(3),
 
     /** Enables @ref uct_iface_params_t::stats_root */
-    UCT_IFACE_PARAM_FIELD_STATS_ROOT                 = UCS_BIT(4),
+    UCT_IFACE_PARAM_FIELD_STATS_ROOT         = UCS_BIT(4),
 
     /** Enables @ref uct_iface_params_t::rx_headroom */
-    UCT_IFACE_PARAM_FIELD_RX_HEADROOM                = UCS_BIT(5),
+    UCT_IFACE_PARAM_FIELD_RX_HEADROOM        = UCS_BIT(5),
 
     /** Enables @ref uct_iface_params_t::err_handler_arg */
-    UCT_IFACE_PARAM_FIELD_ERR_HANDLER_ARG            = UCS_BIT(6),
+    UCT_IFACE_PARAM_FIELD_ERR_HANDLER_ARG    = UCS_BIT(6),
 
     /** Enables @ref uct_iface_params_t::err_handler */
-    UCT_IFACE_PARAM_FIELD_ERR_HANDLER                = UCS_BIT(7),
+    UCT_IFACE_PARAM_FIELD_ERR_HANDLER        = UCS_BIT(7),
 
     /** Enables @ref uct_iface_params_t::err_handler_flags */
-    UCT_IFACE_PARAM_FIELD_ERR_HANDLER_FLAGS          = UCS_BIT(8),
+    UCT_IFACE_PARAM_FIELD_ERR_HANDLER_FLAGS  = UCS_BIT(8),
 
     /** Enables @ref uct_iface_params_t::eager_arg */
-    UCT_IFACE_PARAM_FIELD_HW_TM_EAGER_ARG            = UCS_BIT(9),
+    UCT_IFACE_PARAM_FIELD_HW_TM_EAGER_ARG    = UCS_BIT(9),
 
     /** Enables @ref uct_iface_params_t::eager_cb */
-    UCT_IFACE_PARAM_FIELD_HW_TM_EAGER_CB             = UCS_BIT(10),
+    UCT_IFACE_PARAM_FIELD_HW_TM_EAGER_CB     = UCS_BIT(10),
 
     /** Enables @ref uct_iface_params_t::rndv_arg */
-    UCT_IFACE_PARAM_FIELD_HW_TM_RNDV_ARG             = UCS_BIT(11),
+    UCT_IFACE_PARAM_FIELD_HW_TM_RNDV_ARG     = UCS_BIT(11),
 
     /** Enables @ref uct_iface_params_t::rndv_cb */
-    UCT_IFACE_PARAM_FIELD_HW_TM_RNDV_CB              = UCS_BIT(12),
+    UCT_IFACE_PARAM_FIELD_HW_TM_RNDV_CB      = UCS_BIT(12),
 
     /** Enables @ref uct_iface_params_t::async_event_arg */
-    UCT_IFACE_PARAM_FIELD_ASYNC_EVENT_ARG            = UCS_BIT(13),
+    UCT_IFACE_PARAM_FIELD_ASYNC_EVENT_ARG    = UCS_BIT(13),
 
     /** Enables @ref uct_iface_params_t::async_event_cb */
-    UCT_IFACE_PARAM_FIELD_ASYNC_EVENT_CB             = UCS_BIT(14),
+    UCT_IFACE_PARAM_FIELD_ASYNC_EVENT_CB     = UCS_BIT(14),
 
     /** Enables @ref uct_iface_params_t::keepalive_interval */
-    UCT_IFACE_PARAM_FIELD_KEEPALIVE_INTERVAL         = UCS_BIT(15),
+    UCT_IFACE_PARAM_FIELD_KEEPALIVE_INTERVAL = UCS_BIT(15),
 
     /** Enables @ref uct_iface_params_t::am_alignment */
-    UCT_IFACE_PARAM_FIELD_AM_ALIGNMENT               = UCS_BIT(16),
+    UCT_IFACE_PARAM_FIELD_AM_ALIGNMENT       = UCS_BIT(16),
 
     /** Enables @ref uct_iface_params_t::am_align_offset */
-    UCT_IFACE_PARAM_FIELD_AM_ALIGN_OFFSET            = UCS_BIT(17),
+    UCT_IFACE_PARAM_FIELD_AM_ALIGN_OFFSET    = UCS_BIT(17),
 
     /** Enables @ref uct_iface_params_t::features */
-    UCT_IFACE_PARAM_FIELD_FEATURES                   = UCS_BIT(18),
+    UCT_IFACE_PARAM_FIELD_FEATURES           = UCS_BIT(18),
 
-    /** Enables @ref uct_iface_params_t::rx_header_len */
-    UCT_IFACE_PARAM_FIELD_USER_ALLOCATOR_HEADER_LEN  = UCS_BIT(19),
+    /** Enables @ref uct_iface_params_t::rx_header_length */
+    UCT_IFACE_PARAM_FIELD_RX_HEADER_LENGTH   = UCS_BIT(19),
 
-    /** Enables @ref uct_iface_params_t::rx_payload_len */
-    UCT_IFACE_PARAM_FIELD_USER_ALLOCATOR_PAYLOAD_LEN = UCS_BIT(20),
+    /** Enables @ref uct_iface_params_t::rx_payload_length */
+    UCT_IFACE_PARAM_FIELD_RX_PAYLOAD_LENGTH  = UCS_BIT(20),
 
     /** Enables @ref uct_iface_params_t::rx_allocator */
-    UCT_IFACE_PARAM_FIELD_USER_ALLOCATOR             = UCS_BIT(21)
+    UCT_IFACE_PARAM_FIELD_USER_ALLOCATOR     = UCS_BIT(21)
 };
 
 /**
@@ -1094,7 +1094,7 @@ struct uct_rx_allocator {
     /* User allocator get cb */
     uct_user_allocator_get_buf_cb_t cb;
 
-    /* User allocator arg */
+    /* User-defined argument for the allocator callback */
     void                            *arg;
 };
 
@@ -1212,11 +1212,13 @@ struct uct_iface_params {
     uint64_t                                     features;
 
     /* rx allocator header length */
+    size_t                                       rx_header_length;
 
-    size_t                                       rx_header_len;
-
-    /* rx allocator payload length */
-    size_t                                       rx_payload_len;
+    /** 
+     * Size of the payload receive buffer used by
+     * this interface for incoming active messages.
+     */
+    size_t                                       rx_payload_length;
 
     /* RX buffers allocator passed by the client to be used in post/recv */
     uct_rx_allocator_t                           rx_allocator;

@@ -260,7 +260,7 @@ static void ucp_worker_am_tracer(void *arg, uct_am_trace_type_t type,
     if ((id < UCP_AM_ID_LAST) && (id >= UCP_AM_ID_FIRST)) {
         tracer = ucp_am_handlers[id]->tracer;
         if (tracer != NULL) {
-            tracer(worker, type, id, data, NULL, length, buffer, max);
+            tracer(worker, type, id, data, length, buffer, max);
         }
     }
 }
@@ -874,32 +874,7 @@ static uint64_t ucp_worker_get_exclude_caps(ucp_worker_h worker)
     return exclude_caps;
 }
 
-static UCS_F_ALWAYS_INLINE uct_mem_h ucp_worker_get_uct_memh(
-        ucp_worker_h worker, ucp_mem_h ucp_memh, unsigned md_index)
-{
-    unsigned uct_memh_idx     = 0;
-    unsigned md_bit_idx       = 0;
-    uint8_t *uct_memh_idx_mem = worker->user_mem_allocator.uct_memh_idx_mem;
-    ucp_md_map_t md_map_p     = ucp_memh->md_map;
-
-    assert(md_index < UCP_MD_INDEX_BITS);
-    assert((md_map_p & UCS_BIT(md_index)) != 0);
-
-    if (ucs_unlikely(uct_memh_idx_mem[md_index] == UCP_NULL_RESOURCE)) {
-        ucs_for_each_bit(md_bit_idx, md_map_p) {
-            if (md_bit_idx == md_index) {
-                break;
-            }
-            ++uct_memh_idx;
-        }
-
-        uct_memh_idx_mem[md_index] = uct_memh_idx;
-    }
-
-    return ucp_memh->uct[uct_memh_idx_mem[md_index]];
-}
-
-UCS_PROFILE_FUNC(ssize_t, ucp_worker_user_allocator_get_cb,
+UCS_PROFILE_FUNC(size_t, ucp_worker_user_allocator_get_cb,
                  (arg, num_of_buffers, memh, buffers), void *arg,
                  size_t num_of_buffers, uct_mem_h *memh, void **buffers)
 {
@@ -907,24 +882,25 @@ UCS_PROFILE_FUNC(ssize_t, ucp_worker_user_allocator_get_cb,
     const ucp_worker_h worker        = wiface->worker;
     const ucp_context_h context      = worker->context;
     ucp_tl_resource_desc_t *resource;
-    unsigned md_index;
     ucp_mem_h ucp_memh;
-    ssize_t ret;
+    size_t ret;
 
     assert(buffers != NULL);
     assert(memh != NULL);
 
-    ret = worker->user_mem_allocator.get_buf(worker->user_mem_allocator.obj,
+    ret = worker->user_mem_allocator.get_buf(worker->user_mem_allocator.arg,
                                              num_of_buffers, buffers,
                                              &ucp_memh);
 
-    if (ucs_unlikely(ret <= 0)) {
+    if (ucs_unlikely(ret == 0)) {
         return ret;
     }
 
     resource = &context->tl_rscs[wiface->rsc_index];
-    md_index = resource->md_index;
-    *memh    = ucp_worker_get_uct_memh(worker, ucp_memh, md_index);
+    ucs_assertv(resource->md_index < UCP_MD_INDEX_BITS, "md_index=%d", resource->md_index);
+    ucs_assertv((ucp_memh->md_map & UCS_BIT(resource->md_index)) != 0,
+            "md_map=%"PRIx64" md_index=%d", ucp_memh->md_map, resource->md_index);
+    *memh    = ucp_memh->uct[resource->md_index];
 
     return ret;
 }
@@ -1138,8 +1114,8 @@ static ucs_status_t ucp_worker_add_resource_ifaces(ucp_worker_h worker)
     worker->num_ifaces = num_ifaces;
     iface_id           = 0;
 
-    iface_params.rx_allocator.cb = NULL;
-    iface_params.rx_header_len   = sizeof(ucp_am_hdr_t);
+    iface_params.rx_allocator.cb  = NULL;
+    iface_params.rx_header_length = sizeof(ucp_am_hdr_t);
 
     UCS_BITMAP_FOR_EACH_BIT(tl_bitmap, tl_id) {
         iface_params.field_mask = UCT_IFACE_PARAM_FIELD_OPEN_MODE;
@@ -1155,13 +1131,13 @@ static ucs_status_t ucp_worker_add_resource_ifaces(ucp_worker_h worker)
         }
 
         iface_params.field_mask |=
-                UCT_IFACE_PARAM_FIELD_USER_ALLOCATOR_HEADER_LEN;
-        if (worker->user_mem_allocator.obj) {
+                UCT_IFACE_PARAM_FIELD_RX_HEADER_LENGTH;
+        if (worker->user_mem_allocator.arg) {
             iface_params.field_mask |=
                     UCT_IFACE_PARAM_FIELD_USER_ALLOCATOR |
-                    UCT_IFACE_PARAM_FIELD_USER_ALLOCATOR_PAYLOAD_LEN;
+                    UCT_IFACE_PARAM_FIELD_RX_PAYLOAD_LENGTH;
             iface_params.rx_allocator.cb = ucp_worker_user_allocator_get_cb;
-            iface_params.rx_payload_len =
+            iface_params.rx_payload_length =
                     worker->user_mem_allocator.payload_length;
         }
 
@@ -1291,20 +1267,16 @@ ucs_status_t ucp_worker_iface_open(ucp_worker_h worker, ucp_rsc_index_t tl_id,
         return UCS_ERR_NO_MEMORY;
     }
 
-    wiface->rsc_index        = tl_id;
-    wiface->worker           = worker;
-    wiface->event_fd         = -1;
-    wiface->activate_count   = 0;
-    wiface->check_events_id  = UCS_CALLBACKQ_ID_NULL;
-    wiface->proxy_recv_count = 0;
-    wiface->post_count       = 0;
-    wiface->flags            = 0;
-
-    iface_params->rx_allocator.arg = NULL;
-    if (worker->user_mem_allocator.obj) {
-        iface_params->rx_allocator.arg = wiface;
-    }
-
+    wiface->rsc_index              = tl_id;
+    wiface->worker                 = worker;
+    wiface->event_fd               = -1;
+    wiface->activate_count         = 0;
+    wiface->check_events_id        = UCS_CALLBACKQ_ID_NULL;
+    wiface->proxy_recv_count       = 0;
+    wiface->post_count             = 0;
+    wiface->flags                  = 0;
+    iface_params->rx_allocator.arg = wiface;
+    
     /* Read interface or md configuration */
     if (resource->flags & UCP_TL_RSC_FLAG_SOCKADDR) {
         cfg_tl_name = NULL;
@@ -2420,12 +2392,10 @@ ucs_status_t ucp_worker_create(ucp_context_h context,
             goto err_free;
         }
 
-        memset(worker->user_mem_allocator.uct_memh_idx_mem, UCP_NULL_RESOURCE,
-               sizeof(worker->user_mem_allocator.uct_memh_idx_mem));
         worker->user_mem_allocator.payload_length =
                 params->user_allocator.buffer_size;
         worker->user_mem_allocator.get_buf = params->user_allocator.cb;
-        worker->user_mem_allocator.obj     = params->user_allocator.arg;
+        worker->user_mem_allocator.arg     = params->user_allocator.arg;
     }
 
     /* Create statistics */

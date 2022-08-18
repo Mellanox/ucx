@@ -775,6 +775,7 @@ void uct_ib_mlx5_qp_mmio_cleanup(uct_ib_mlx5_qp_t *qp,
 
 ucs_status_t uct_ib_mlx5_get_rxwq(struct ibv_qp *verbs_qp, uct_ib_mlx5_rxwq_t *rxwq)
 {
+    const size_t rq_sge_stride = sizeof(struct mlx5_wqe_data_seg) * UCT_IB_RECV_SG_LIST_LEN;
     uct_ib_mlx5dv_qp_t qp_info = {};
     uct_ib_mlx5dv_t obj = {};
     ucs_status_t status;
@@ -788,8 +789,7 @@ ucs_status_t uct_ib_mlx5_get_rxwq(struct ibv_qp *verbs_qp, uct_ib_mlx5_rxwq_t *r
     }
 
     if (!ucs_is_pow2(qp_info.dv.rq.wqe_cnt) ||
-        (qp_info.dv.rq.stride !=
-         sizeof(struct mlx5_wqe_data_seg) * UCT_IB_RECV_SG_LIST_LEN)) {
+        (qp_info.dv.rq.stride != rq_sge_stride)) {
         ucs_error("mlx5 rx wq [count=%d stride=%d] has invalid parameters",
                   qp_info.dv.rq.wqe_cnt,
                   qp_info.dv.rq.stride);
@@ -801,9 +801,7 @@ ucs_status_t uct_ib_mlx5_get_rxwq(struct ibv_qp *verbs_qp, uct_ib_mlx5_rxwq_t *r
     rxwq->mask            = qp_info.dv.rq.wqe_cnt - 1;
     /* cppcheck-suppress autoVariables */
     rxwq->dbrec           = &qp_info.dv.dbrec[MLX5_RCV_DBR];
-    memset(rxwq->wqes, 0,
-           (qp_info.dv.rq.wqe_cnt * sizeof(struct mlx5_wqe_data_seg) *
-            UCT_IB_RECV_SG_LIST_LEN));
+    memset(rxwq->wqes, 0, (qp_info.dv.rq.wqe_cnt * rq_sge_stride));
 
     return UCS_OK;
 }

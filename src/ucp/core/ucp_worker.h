@@ -254,10 +254,9 @@ UCS_PTR_MAP_TYPE(request, 0);
 
 
 typedef struct ucp_worker_user_mem_allocator {
-    void                   *obj;
+    void                   *arg;
     size_t                 payload_length;
     ucp_mem_allocator_cb_t get_buf;
-    uint8_t                uct_memh_idx_mem[UCP_MD_INDEX_BITS];
 } ucp_worker_user_mem_allocator_t;
 
 

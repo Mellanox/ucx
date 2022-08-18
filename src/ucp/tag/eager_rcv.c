@@ -489,8 +489,8 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_tag_offload_unexp_eager,
 }
 
 static void ucp_eager_dump(ucp_worker_h worker, uct_am_trace_type_t type,
-                           uint8_t id, const void *data, const void *payload,
-                           size_t length, char *buffer, size_t max)
+                           uint8_t id, const void *data, size_t length,
+                           char *buffer, size_t max)
 {
     const ucp_eager_first_hdr_t *eager_first_hdr = data;
     const ucp_eager_hdr_t *eager_hdr             = data;
