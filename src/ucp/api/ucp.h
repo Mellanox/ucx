@@ -1236,9 +1236,8 @@ typedef struct ucp_worker_attr {
  * @return                     Number of allocated buffers if successful.
  *                             In case of an error return 0.
  */
-typedef size_t (*ucp_mem_allocator_cb_t)(void *arg,
-                                         size_t num_of_buffers, void **buffers,
-                                         ucp_mem_h *memh);
+typedef size_t (*ucp_mem_allocator_cb_t)(void *arg, size_t num_of_buffers,
+                                         void **buffers, ucp_mem_h *memh);
 
 
 /**

@@ -775,7 +775,8 @@ void uct_ib_mlx5_qp_mmio_cleanup(uct_ib_mlx5_qp_t *qp,
 
 ucs_status_t uct_ib_mlx5_get_rxwq(struct ibv_qp *verbs_qp, uct_ib_mlx5_rxwq_t *rxwq)
 {
-    const size_t rq_sge_stride = sizeof(struct mlx5_wqe_data_seg) * UCT_IB_RECV_SG_LIST_LEN;
+    const size_t rq_sge_stride = sizeof(struct mlx5_wqe_data_seg) *
+                                 UCT_IB_RECV_SG_LIST_LEN;
     uct_ib_mlx5dv_qp_t qp_info = {};
     uct_ib_mlx5dv_t obj = {};
     ucs_status_t status;

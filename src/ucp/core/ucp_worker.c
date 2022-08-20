@@ -897,10 +897,12 @@ UCS_PROFILE_FUNC(size_t, ucp_worker_user_allocator_get_cb,
     }
 
     resource = &context->tl_rscs[wiface->rsc_index];
-    ucs_assertv(resource->md_index < UCP_MD_INDEX_BITS, "md_index=%d", resource->md_index);
+    ucs_assertv(resource->md_index < UCP_MD_INDEX_BITS, "md_index=%d",
+                resource->md_index);
     ucs_assertv((ucp_memh->md_map & UCS_BIT(resource->md_index)) != 0,
-            "md_map=%"PRIx64" md_index=%d", ucp_memh->md_map, resource->md_index);
-    *memh    = ucp_memh->uct[resource->md_index];
+                "md_map=%" PRIx64 " md_index=%d", ucp_memh->md_map,
+                resource->md_index);
+    *memh = ucp_memh->uct[resource->md_index];
 
     return ret;
 }
@@ -1130,12 +1132,10 @@ static ucs_status_t ucp_worker_add_resource_ifaces(ucp_worker_h worker)
             iface_params.mode.device.dev_name = resource->tl_rsc.dev_name;
         }
 
-        iface_params.field_mask |=
-                UCT_IFACE_PARAM_FIELD_RX_HEADER_LENGTH;
+        iface_params.field_mask |= UCT_IFACE_PARAM_FIELD_RX_HEADER_LENGTH;
         if (worker->user_mem_allocator.arg) {
-            iface_params.field_mask |=
-                    UCT_IFACE_PARAM_FIELD_USER_ALLOCATOR |
-                    UCT_IFACE_PARAM_FIELD_RX_PAYLOAD_LENGTH;
+            iface_params.field_mask |= UCT_IFACE_PARAM_FIELD_USER_ALLOCATOR |
+                                       UCT_IFACE_PARAM_FIELD_RX_PAYLOAD_LENGTH;
             iface_params.rx_allocator.cb = ucp_worker_user_allocator_get_cb;
             iface_params.rx_payload_length =
                     worker->user_mem_allocator.payload_length;
@@ -1276,7 +1276,7 @@ ucs_status_t ucp_worker_iface_open(ucp_worker_h worker, ucp_rsc_index_t tl_id,
     wiface->post_count             = 0;
     wiface->flags                  = 0;
     iface_params->rx_allocator.arg = wiface;
-    
+
     /* Read interface or md configuration */
     if (resource->flags & UCP_TL_RSC_FLAG_SOCKADDR) {
         cfg_tl_name = NULL;
