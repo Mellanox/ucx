@@ -40,14 +40,14 @@
 #include <unistd.h>    /* getopt */
 #include <stdlib.h>    /* atoi */
 
-#define DEFAULT_PORT           13337
-#define IP_STRING_LEN          50
-#define PORT_STRING_LEN        8
-#define TAG                    0xCAFE
-#define COMM_TYPE_DEFAULT      "STREAM"
-#define PRINT_INTERVAL         2000
-#define DEFAULT_NUM_ITERATIONS 1
-#define TEST_AM_ID             0
+#define DEFAULT_PORT             13337
+#define IP_STRING_LEN            50
+#define PORT_STRING_LEN          8
+#define TAG                      0xCAFE
+#define COMM_TYPE_DEFAULT        "STREAM"
+#define PRINT_INTERVAL           2000
+#define DEFAULT_NUM_ITERATIONS   1
+#define TEST_AM_ID               0
 #define ALLOCATOR_NUM_OF_BUFFERS 32768
 #define ALLOCATOR_PAYLOAD_LENGTH 8192
 
@@ -57,6 +57,7 @@ static long iov_cnt            = 1;
 static uint16_t server_port    = DEFAULT_PORT;
 static sa_family_t ai_family   = AF_INET;
 static int num_iterations      = DEFAULT_NUM_ITERATIONS;
+static int default_allocator   = 1;
 
 
 typedef enum {
@@ -626,7 +627,7 @@ static int parse_cmd(int argc, char *const argv[], char **server_addr,
     int c = 0;
     int port;
 
-    while ((c = getopt(argc, argv, "a:l:p:c:6i:s:v:m:h")) != -1) {
+    while ((c = getopt(argc, argv, "a:l:p:c:6i:s:v:m:h:u")) != -1) {
         switch (c) {
         case 'a':
             *server_addr = optarg;
@@ -680,6 +681,9 @@ static int parse_cmd(int argc, char *const argv[], char **server_addr,
             if (test_mem_type == UCS_MEMORY_TYPE_LAST) {
                 return UCS_ERR_UNSUPPORTED;
             }
+            break;
+        case 'u':
+            default_allocator = 0;
             break;
         case 'h':
         default:
@@ -1072,12 +1076,14 @@ static int run_server(ucp_context_h ucp_context, ucp_worker_h ucp_worker,
     ucs_status_t           status;
     int                    ret;
 
-    status = mpool_allocator_init(ucp_context, ALLOCATOR_PAYLOAD_LENGTH,
-                                  &allocator_obj);
-    if (status != UCS_OK) {
-        fprintf(stderr, "failed to create memory allocator (%s)\n",
-                ucs_status_string(status));
-        goto err;
+    if (!default_allocator) {
+        status = mpool_allocator_init(ucp_context, ALLOCATOR_PAYLOAD_LENGTH,
+                                      &allocator_obj);
+        if (status != UCS_OK) {
+            fprintf(stderr, "failed to create memory allocator (%s)\n",
+                    ucs_status_string(status));
+            goto err;
+        }
     }
 
     /* Create a data worker (to be used for data exchange between the server
@@ -1161,7 +1167,9 @@ err_listener:
 err_worker:
     ucp_worker_destroy(ucp_data_worker);
 err_allocator:
-    mpool_allocator_clean(allocator_obj);
+    if (allocator_obj) {
+        mpool_allocator_clean(allocator_obj);
+    }
 err:
     return ret;
 }
@@ -1239,15 +1247,43 @@ int main(int argc, char **argv)
     send_recv_type_t send_recv_type = CLIENT_SERVER_SEND_RECV_DEFAULT;
     char *server_addr = NULL;
     char *listen_addr = NULL;
+    char num_of_buffers[256];
     int ret;
 
     /* UCP objects */
+    ucp_config_t *config = NULL;
     ucp_context_h ucp_context;
     ucp_worker_h  ucp_worker;
 
     ret = parse_cmd(argc, argv, &server_addr, &listen_addr, &send_recv_type);
     if (ret != 0) {
         goto err;
+    }
+
+    if (!default_allocator) {
+        ret = ucp_config_read(NULL, NULL, &config);
+        if (ret != UCS_OK) {
+            goto err;
+        }
+
+        ret = ucp_config_modify(config, "MAX_CHUNK_SIZE", "-1");
+        if (ret != UCS_OK) {
+            goto err;
+        }
+
+        snprintf(num_of_buffers, 256, "%d",
+                 (int)(ALLOCATOR_NUM_OF_BUFFERS * 1.10));
+        ret = ucp_config_modify(config, "UCX_DC_MLX5_RX_BUFS_GROW",
+                                num_of_buffers);
+        if (ret != UCS_OK) {
+            goto err;
+        }
+
+        ret = ucp_config_modify(config, "UCX_DC_MLX5_RX_MAX_BUFS",
+                                num_of_buffers);
+        if (ret != UCS_OK) {
+            goto err;
+        }
     }
 
     /* Initialize the UCX required objects */
@@ -1268,5 +1304,8 @@ int main(int argc, char **argv)
     ucp_worker_destroy(ucp_worker);
     ucp_cleanup(ucp_context);
 err:
+    if (config) {
+        ucp_config_release(config);
+    }
     return ret;
 }
