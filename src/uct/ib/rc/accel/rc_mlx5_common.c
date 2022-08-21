@@ -730,12 +730,12 @@ void uct_rc_mlx5_release_desc(uct_recv_desc_t *self, void *desc)
 {
     uct_rc_mlx5_release_desc_t *release = ucs_derived_of(self,
                                                          uct_rc_mlx5_release_desc_t);
-    uct_base_iface_t *iface = ucs_derived_of(self, uct_base_iface_t);
+    uct_rc_mlx5_iface_common_t *iface = ucs_container_of(release, uct_rc_mlx5_iface_common_t, tm.am_desc);
     uct_ib_iface_recv_desc_t *ib_desc =
             (uct_ib_iface_recv_desc_t*)((char*)desc - release->offset);
     void *payload_desc;
 
-    if (ucs_unlikely(iface->rx_allocator.release_payload_desc)) {
+    if (ucs_unlikely(iface->super.super.super.rx_allocator.release_payload_desc)) {
         payload_desc = UCS_PTR_BYTE_OFFSET(ib_desc->payload,
                                            -sizeof(uct_iface_recv_desc_t));
         ucs_mpool_put_inline(payload_desc);
