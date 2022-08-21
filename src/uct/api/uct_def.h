@@ -963,5 +963,4 @@ typedef size_t (*uct_user_allocator_get_buf_cb_t)(void *arg,
                                                   uct_mem_h *memh,
                                                   void **buffers);
 
-
 #endif
