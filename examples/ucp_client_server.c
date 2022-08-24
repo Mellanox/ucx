@@ -58,8 +58,8 @@ static uint16_t server_port    = DEFAULT_PORT;
 static sa_family_t ai_family   = AF_INET;
 static int num_iterations      = DEFAULT_NUM_ITERATIONS;
 static int user_allocator      = 0;
-int available_rdesc_idx        = 0;
-static void *held_rdescs[ALLOCATOR_NUM_OF_BUFFERS];
+int next_held_data_desc_idx    = 0;
+static void *held_data_descs[ALLOCATOR_NUM_OF_BUFFERS];
 
 
 typedef enum {
@@ -111,6 +111,9 @@ static void usage(void);
  */
 static void memory_allocator_free(void *obj);
 
+/* 
+ * Release the data descs that was held by AM CB.
+ */
 static inline void release_held_data_descs(ucp_worker_h worker)
 {
     int i;
@@ -119,20 +122,23 @@ static inline void release_held_data_descs(ucp_worker_h worker)
         return;
     }
 
-    for (i = 0; i < available_rdesc_idx; i++) {
-        ucp_am_data_release(worker, held_rdescs[i]);
+    for (i = 0; i < next_held_data_desc_idx; i++) {
+        ucp_am_data_release(worker, held_data_descs[i]);
     }
-    available_rdesc_idx = 0;
+    next_held_data_desc_idx = 0;
 }
 
+/* 
+ * Save data desc for future release.
+ */
 static inline void hold_data_desc(void *data_desc)
 {
-    ucs_assertv(
-            available_rdesc_idx < ALLOCATOR_NUM_OF_BUFFERS,
-            "Number of held data descs exceed hel_rdescs array capacicty %d",
-            ALLOCATOR_NUM_OF_BUFFERS);
-    held_rdescs[available_rdesc_idx] = data_desc;
-    available_rdesc_idx++;
+    ucs_assertv(next_held_data_desc_idx < ALLOCATOR_NUM_OF_BUFFERS,
+                "Number of held data descs exceed held_data_descs array "
+                "capacity %d",
+                ALLOCATOR_NUM_OF_BUFFERS);
+    held_data_descs[next_held_data_desc_idx] = data_desc;
+    next_held_data_desc_idx++;
 }
 
 void buffer_free(ucp_dt_iov_t *iov)
@@ -555,6 +561,10 @@ ucs_status_t ucp_am_data_cb(void *arg, const void *header, size_t header_length,
     if (user_allocator) {
         memory_allocator_free(param->payload);
     } else {
+        /* 
+         * Save data desc for future release before returning IN_PROGRESS.
+         * The held data descs will be release in the next call for the AM CB.
+         */
         hold_data_desc(data);
     }
 
@@ -806,18 +816,18 @@ static int client_server_communication(ucp_worker_h worker, ucp_ep_h ep,
  * Implementation of memory allocator based on ucs mpool
  * following new user memory allocator API
  */
-typedef struct mpool_allocator_obj {
+typedef struct memory_allocator_obj {
     ucs_mpool_t   mpool;
     ucp_context_h context;
     size_t        payload_length;
     ucp_mem_h     memh;
-} ucp_worker_mpool_allocator_obj_t;
+} ucp_worker_memory_allocator_obj_t;
 
 ucs_status_t
 memory_allocator_chunk_alloc(ucs_mpool_t *mp, size_t *size_p, void **chunk_p)
 {
-    ucp_worker_mpool_allocator_obj_t *allocator =
-            (ucp_worker_mpool_allocator_obj_t*)mp;
+    ucp_worker_memory_allocator_obj_t *allocator =
+            (ucp_worker_memory_allocator_obj_t*)mp;
     const ucp_context_h context = allocator->context;
     ucp_mem_h memh              = NULL;
     ucs_status_t status;
@@ -855,8 +865,8 @@ memory_allocator_chunk_alloc(ucs_mpool_t *mp, size_t *size_p, void **chunk_p)
 
 void memory_allocator_chunk_release(ucs_mpool_t *mp, void *chunk)
 {
-    const ucp_worker_mpool_allocator_obj_t *allocator =
-            (ucp_worker_mpool_allocator_obj_t*)mp;
+    const ucp_worker_memory_allocator_obj_t *allocator =
+            (ucp_worker_memory_allocator_obj_t*)mp;
     ucp_mem_attr_t memh_attr;
 
     memh_attr.field_mask = UCP_MEM_ATTR_FIELD_ADDRESS;
@@ -875,11 +885,11 @@ static ucs_mpool_ops_t memory_allocator_ops = {
 
 ucs_status_t
 memory_allocator_init(ucp_context_h context, const size_t buffer_size,
-                      ucp_worker_mpool_allocator_obj_t **allocator_obj)
+                      ucp_worker_memory_allocator_obj_t **allocator_obj)
 {
-    ucp_worker_mpool_allocator_obj_t *allocator =
-            (ucp_worker_mpool_allocator_obj_t*)malloc(
-                    sizeof(ucp_worker_mpool_allocator_obj_t));
+    ucp_worker_memory_allocator_obj_t *allocator =
+            (ucp_worker_memory_allocator_obj_t*)malloc(
+                    sizeof(ucp_worker_memory_allocator_obj_t));
     ucs_mpool_params_t mp_params;
     ucs_status_t status;
 
@@ -910,8 +920,8 @@ static size_t memory_allocator_get_buff(void *allocator_obj,
                                         size_t num_of_buffers, void **buffers,
                                         ucp_mem_h *memh)
 {
-    ucp_worker_mpool_allocator_obj_t *allocator =
-            (ucp_worker_mpool_allocator_obj_t*)allocator_obj;
+    ucp_worker_memory_allocator_obj_t *allocator =
+            (ucp_worker_memory_allocator_obj_t*)allocator_obj;
     void *obj;
     size_t buff_idx;
 
@@ -933,10 +943,10 @@ static void memory_allocator_free(void *obj)
     ucs_mpool_put((void*)obj);
 }
 
-void memory_allocator_destroy(ucp_worker_mpool_allocator_obj_t *allocator)
+void memory_allocator_destroy(ucp_worker_memory_allocator_obj_t *allocator)
 {
-    ucs_mpool_cleanup(&allocator->mpool, 0);
     if (allocator) {
+        ucs_mpool_cleanup(&allocator->mpool, 0);
         free(allocator);
     }
 }
@@ -945,7 +955,7 @@ void memory_allocator_destroy(ucp_worker_mpool_allocator_obj_t *allocator)
  * Create a ucp worker on the given ucp context.
  */
 static int init_worker(ucp_context_h ucp_context, ucp_worker_h *ucp_worker,
-                       ucp_worker_mpool_allocator_obj_t *allocator_obj)
+                       ucp_worker_memory_allocator_obj_t *allocator_obj)
 {
     ucp_worker_params_t worker_params;
     ucs_status_t status;
@@ -1109,7 +1119,7 @@ out:
 static int run_server(ucp_context_h ucp_context, ucp_worker_h ucp_worker,
                       char *listen_addr, send_recv_type_t send_recv_type)
 {
-    ucp_worker_mpool_allocator_obj_t *allocator_obj = NULL;
+    ucp_worker_memory_allocator_obj_t *allocator_obj = NULL;
     ucx_server_ctx_t       context;
     ucp_worker_h           ucp_data_worker;
     ucp_am_handler_param_t param;
