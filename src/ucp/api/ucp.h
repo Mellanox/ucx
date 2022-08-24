@@ -1876,6 +1876,12 @@ struct ucp_am_recv_param {
      * Endpoint, which can be used for the reply to this message.
      */
     ucp_ep_h           reply_ep;
+
+    /**
+     * Payload of the received message.
+     * Relevant only for eager protocols.
+     */
+    void               *payload;
 };
 
 
