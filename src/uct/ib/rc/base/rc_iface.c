@@ -28,7 +28,7 @@ static const char *uct_rc_fence_mode_values[] = {
 };
 
 ucs_config_field_t uct_rc_iface_common_config_table[] = {
-  //scatter2cqe is not supported yet by new AM handlers handling non contiguous rx descriptor.
+  //scatter2cqe is not supported by new AM handlers handling non contiguous rx descriptor.
   {UCT_IB_CONFIG_PREFIX, "RX_INLINE=0;TX_INLINE_RESP=64;RX_QUEUE_LEN=4095;SEG_SIZE=8256", NULL,
    ucs_offsetof(uct_rc_iface_common_config_t, super),
    UCS_CONFIG_TYPE_TABLE(uct_ib_iface_config_table)},
