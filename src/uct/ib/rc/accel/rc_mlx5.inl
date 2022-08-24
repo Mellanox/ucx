@@ -92,10 +92,13 @@ uct_rc_mlx5_iface_hold_srq_desc(uct_rc_mlx5_iface_common_t *iface,
         uct_recv_desc(udesc) = release_desc;
         seg->srq.ptr_mask   &= ~UCS_BIT(stride_idx);
     } else {
-        udesc                = UCS_PTR_BYTE_OFFSET(seg->srq.desc, offset);
-        uct_recv_desc(udesc) = release_desc;
-        seg->srq.ptr_mask   &= ~UCS_MASK(UCT_IB_RECV_SG_LIST_LEN);
-        seg->srq.desc        = NULL;
+        seg->srq.ptr_mask &= ~UCS_BIT(UCT_IB_RX_SG_PAYLOAD_IDX);
+        if (iface->super.super.super.rx_allocator.release_payload_desc) {
+            udesc                = UCS_PTR_BYTE_OFFSET(seg->srq.desc, offset);
+            uct_recv_desc(udesc) = release_desc;
+            seg->srq.ptr_mask &= ~UCS_BIT(UCT_IB_RX_SG_TL_HEADER_IDX);
+            seg->srq.desc = NULL;
+        }
     }
 }
 
@@ -1875,7 +1878,7 @@ uct_ib_mlx5_srq_buff_init_common(uct_rc_mlx5_iface_common_t *iface, uint32_t hea
  * Check if rx_allocator cache is empty
  */
 UCS_F_ALWAYS_INLINE int
-uct_rc_mlx5_rx_allocator_iface_is_empty(uct_base_iface_t *base_iface)
+uct_rc_mlx5_rx_allocator_is_empty(uct_base_iface_t *base_iface)
 {
     return (base_iface->rx_allocator.cache.ready_idx ==
                     base_iface->rx_allocator.cache.available);
@@ -1886,11 +1889,11 @@ uct_rc_mlx5_rx_allocator_iface_is_empty(uct_base_iface_t *base_iface)
  * with new available buffers.
  */
 UCS_F_ALWAYS_INLINE ucs_status_t
-uct_rc_mlx5_rx_allocator_iface_get_buffers(uct_base_iface_t *base_iface)
+uct_rc_mlx5_rx_allocator_get_buffers(uct_base_iface_t *base_iface)
 {
-    ssize_t num_allocated;
+    size_t num_allocated;
 
-    ucs_assert(uct_rc_mlx5_rx_allocator_iface_is_empty(base_iface));
+    ucs_assert(uct_rc_mlx5_rx_allocator_is_empty(base_iface));
     num_allocated = base_iface->rx_allocator.allocator.cb(
             base_iface->rx_allocator.allocator.arg,
             UCT_ALLOCATOR_MAX_RX_BUFFS, &base_iface->rx_allocator.cache.memh,
@@ -1899,6 +1902,10 @@ uct_rc_mlx5_rx_allocator_iface_get_buffers(uct_base_iface_t *base_iface)
     base_iface->rx_allocator.cache.ready_idx = 0;
     base_iface->rx_allocator.cache.available = num_allocated;
 
+    if (ucs_unlikely(uct_rc_mlx5_rx_allocator_is_empty(base_iface))) {
+        return UCS_ERR_NO_MEMORY;
+    }
+
     return UCS_OK;
 }
 
@@ -1906,11 +1913,14 @@ uct_rc_mlx5_rx_allocator_iface_get_buffers(uct_base_iface_t *base_iface)
  * Return buffer from the rx_allocator cache
  */
 UCS_F_ALWAYS_INLINE void *
-uct_rc_mlx5_rx_allocator_iface_get_buffer(uct_base_iface_t *base_iface)
+uct_rc_mlx5_rx_allocator_get_buffer(uct_base_iface_t *base_iface)
 {
     void *buff;
 
-    ucs_assert(!uct_rc_mlx5_rx_allocator_iface_is_empty(base_iface));
+    if (ucs_unlikely(uct_rc_mlx5_rx_allocator_is_empty(base_iface))) {
+        return NULL;
+    }
+
     buff = base_iface->rx_allocator.cache
                    .buffers[base_iface->rx_allocator.cache.ready_idx];
     base_iface->rx_allocator.cache.ready_idx++;

@@ -113,47 +113,89 @@ uct_rc_mlx5_iface_srq_set_seg(uct_rc_mlx5_iface_common_t *iface,
     return UCS_OK;
 }
 
+static UCS_F_ALWAYS_INLINE ucs_status_t
+uct_rc_mlx5_iface_seg_set_sge_header_entry(uct_rc_mlx5_iface_common_t *iface,
+                                           uct_ib_mlx5_srq_seg_t *seg)
+{
+    uct_ib_iface_recv_desc_t *desc;
+    void *hdr;
+
+    UCT_TL_IFACE_GET_RX_DESC(&iface->super.super.super,
+                             &iface->super.rx.mps[UCT_IB_RX_SG_TL_HEADER_IDX],
+                             desc, return UCS_ERR_NO_MEMORY);
+    hdr           = uct_ib_iface_recv_desc_hdr(&iface->super.super, desc);
+    seg->srq.desc = desc;
+
+    seg->srq.ptr_mask |= UCS_BIT(UCT_IB_RX_SG_TL_HEADER_IDX);
+    seg->dptr[UCT_IB_RX_SG_TL_HEADER_IDX].lkey = htonl(desc->header_lkey);
+    seg->dptr[UCT_IB_RX_SG_TL_HEADER_IDX].addr = htobe64((uintptr_t)hdr);
+
+    VALGRIND_MAKE_MEM_NOACCESS(hdr,
+                               uct_ib_iface_tl_hdr_length(&iface->super.super));
+    return UCS_OK;
+}
+
+static UCS_F_ALWAYS_INLINE ucs_status_t
+uct_rc_mlx5_iface_seg_set_sge_payload_entry(uct_rc_mlx5_iface_common_t *iface,
+                                            uct_ib_mlx5_srq_seg_t *seg)
+{
+    uct_base_iface_t *base_iface   = &iface->super.super.super;
+    uct_ib_iface_recv_desc_t *desc = seg->srq.desc;
+
+    desc->payload = uct_rc_mlx5_rx_allocator_get_buffer(base_iface);
+    if (ucs_unlikely(desc->payload == NULL)) {
+        return UCS_ERR_NO_MEMORY;
+    }
+    desc->payload_lkey = uct_ib_memh_get_lkey(
+            base_iface->rx_allocator.cache.memh);
+
+    seg->srq.ptr_mask |= UCS_BIT(UCT_IB_RX_SG_PAYLOAD_IDX);
+    seg->dptr[UCT_IB_RX_SG_PAYLOAD_IDX].lkey = htonl(desc->payload_lkey);
+    seg->dptr[UCT_IB_RX_SG_PAYLOAD_IDX].addr = htobe64(
+            (uintptr_t)desc->payload);
+
+    VALGRIND_MAKE_MEM_NOACCESS(desc->payload,
+                               base_iface->rx_allocator.payload_length);
+    return UCS_OK;
+}
+
 static UCS_F_ALWAYS_INLINE ucs_status_t uct_rc_mlx5_iface_srq_set_seg_sge(
         uct_rc_mlx5_iface_common_t *iface, uct_ib_mlx5_srq_seg_t *seg)
 {
     uct_base_iface_t *base_iface = &iface->super.super.super;
-    void *hdr;
     uint64_t desc_map;
     ucs_status_t status;
-    uct_ib_iface_recv_desc_t *desc;
 
     desc_map = ~seg->srq.ptr_mask & UCS_MASK(UCT_IB_RECV_SG_LIST_LEN);
     if (!desc_map) {
         return UCS_OK;
     }
 
-    if (uct_rc_mlx5_rx_allocator_iface_is_empty(base_iface)) {
-        status = uct_rc_mlx5_rx_allocator_iface_get_buffers(base_iface);
+    if (uct_rc_mlx5_rx_allocator_is_empty(base_iface)) {
+        status = uct_rc_mlx5_rx_allocator_get_buffers(base_iface);
         if (ucs_unlikely(status != UCS_OK)) {
-            return UCS_ERR_NO_MEMORY;
+            return status;
         }
     }
 
-    UCT_TL_IFACE_GET_RX_DESC(base_iface,
-                             &iface->super.rx.mps[UCT_IB_RX_SG_TL_HEADER_IDX],
-                             desc, return UCS_ERR_NO_MEMORY);
-    desc->payload      = uct_rc_mlx5_rx_allocator_iface_get_buffer(base_iface);
-    desc->payload_lkey = uct_ib_memh_get_lkey(
-            base_iface->rx_allocator.cache.memh);
-    /* Set receive data segment pointer. Length is pre-initialized. */
-    hdr                = uct_ib_iface_recv_desc_hdr(&iface->super.super, desc);
+    if (desc_map & UCS_BIT(UCT_IB_RX_SG_TL_HEADER_IDX)) {
+        status = uct_rc_mlx5_iface_seg_set_sge_header_entry(iface, seg);
+        if (ucs_unlikely(status != UCS_OK)) {
+            return status;
+        }
+    }
 
-    seg->srq.desc      = desc; /* Optimization for non-MP case (1 stride) */
-    seg->srq.ptr_mask |= UCS_MASK(UCT_IB_RECV_SG_LIST_LEN);
-    seg->dptr[UCT_IB_RX_SG_TL_HEADER_IDX].lkey = htonl(desc->header_lkey);
-    seg->dptr[UCT_IB_RX_SG_TL_HEADER_IDX].addr = htobe64((uintptr_t)hdr);
-    seg->dptr[UCT_IB_RX_SG_PAYLOAD_IDX].lkey   = htonl(desc->payload_lkey);
-    seg->dptr[UCT_IB_RX_SG_PAYLOAD_IDX].addr   = htobe64(
-            (uintptr_t)desc->payload);
-    VALGRIND_MAKE_MEM_NOACCESS(hdr,
-                               uct_ib_iface_tl_hdr_length(&iface->super.super));
-    VALGRIND_MAKE_MEM_NOACCESS(desc->payload,
-                               base_iface->rx_allocator.payload_length);
+    if (desc_map & UCS_BIT(UCT_IB_RX_SG_PAYLOAD_IDX)) {
+        /* 
+         * No need to check for the return status here.
+         * RX Allocator cache contains at least one free buffer.
+         * We know that because before entering this branch we filled
+         * the cache with new buffers and checked the return status.
+         */
+        ucs_assertv(!uct_rc_mlx5_rx_allocator_is_empty(base_iface),
+                    "RX Allocator cache is empty");
+        uct_rc_mlx5_iface_seg_set_sge_payload_entry(iface, seg);
+    }
 
     return UCS_OK;
 }
