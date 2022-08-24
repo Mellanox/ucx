@@ -51,7 +51,6 @@ enum {
 };
 
 
-#define UCT_IB_IFACE_TERMINATE_SCATTER_LIST_MKEY 0x100
 /**
  * IB RX segments scatter gather list entries.
  */
@@ -366,7 +365,6 @@ typedef struct uct_ib_iface_recv_desc {
     uint32_t header_lkey;
     uint32_t payload_lkey;
     void     *payload;
-    int      release_payload;
 } UCS_S_PACKED uct_ib_iface_recv_desc_t;
 
 
@@ -536,7 +534,7 @@ static inline void* uct_ib_iface_recv_desc_hdr(uct_ib_iface_t *iface,
 
 typedef struct uct_ib_recv_wr {
     struct ibv_recv_wr ibwr;
-    struct ibv_sge     sg[UCT_IB_RECV_SG_LIST_LEN];
+    struct ibv_sge     sg;
 } uct_ib_recv_wr_t;
 
 /**
@@ -655,7 +653,7 @@ static UCS_F_ALWAYS_INLINE size_t
 uct_ib_iface_tl_hdr_length(uct_ib_iface_t *iface)
 {
     return iface->config.rx_payload_offset - iface->config.rx_hdr_offset +
-           iface->super.rx_allocator.config.header_length;
+           iface->super.rx_allocator.header_length;
 }
 
 static UCS_F_ALWAYS_INLINE void

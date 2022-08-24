@@ -27,6 +27,12 @@
 #define UCT_INVALID_RKEY           ((uintptr_t)(-1))
 #define UCT_INLINE_API             static UCS_F_ALWAYS_INLINE
 
+/**
+ * UCT RX allocator cache size.
+ * This is the maximal capacity of buffers array.
+ * */
+#define UCT_ALLOCATOR_MAX_RX_BUFFS 64
+
 
 /**
  * @ingroup UCT_AM
@@ -108,7 +114,7 @@ typedef struct uct_tag_context       uct_tag_context_t;
 typedef uint64_t                     uct_tag_t;  /* tag type - 64 bit */
 typedef int                          uct_worker_cb_id_t;
 typedef void*                        uct_conn_request_h;
-typedef struct uct_rx_allocator uct_rx_allocator_t;
+typedef struct uct_rx_allocator      uct_rx_allocator_t;
 
 /**
  * @}
@@ -927,7 +933,6 @@ typedef ucs_status_t (*uct_tag_unexp_rndv_cb_t)(void *arg, unsigned flags,
                                                 const void *rkey_buf);
 
 
-#define UCT_ALLOCATOR_MAX_RX_BUFFS 64
 /**
  * @ingroup UCT_RESOURCE
  * @brief Callback to process asynchronous events.
@@ -942,15 +947,20 @@ typedef void (*uct_async_event_cb_t)(void *arg, unsigned flags);
 /**
  * Get buffer and uct memory handler from user allocator.
  *
- * @param [in]  arg     uct obj arg. TODO - improve description.
- * @param [out] buf     agent buffer.
+ * @param [in]  arg            User-defined argument for the allocator callback.
+ * @param [in]  num_of_buffers Number of buffers required.
  *
- * @return            Error code as defined by @ref ucs_status_t
+ * @param [out] memh           Memory handle associated with the returned buffers.
+ *                             @note It's assumed that all buffers returned by
+ *                             this callback share the same memory handle
+ * @param [out] buffers        Returned buffers.
+ *
+ * @return                     Number of allocated buffers if successful.
+ *                             In case of an error return 0.
  */
-typedef ssize_t (*uct_user_allocator_get_buf_cb_t)(void *arg,
-                                                   size_t num_of_buffers,
-                                                   uct_mem_h *memh,
-                                                   void **buffers);
-
+typedef size_t (*uct_user_allocator_get_buf_cb_t)(void *arg,
+                                                  size_t num_of_buffers,
+                                                  uct_mem_h *memh,
+                                                  void **buffers);
 
 #endif

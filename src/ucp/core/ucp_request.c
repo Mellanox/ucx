@@ -601,6 +601,7 @@ ucs_status_t ucp_request_send_start(ucp_request_t *req, ssize_t max_short,
         req->send.uct.func = proto->contig_short;
         UCS_PROFILE_REQUEST_EVENT(req, "start_contig_short", req->send.length);
         return UCS_OK;
+        // disable bcopy multi fragment proto
     } else if ((length < zcopy_thresh) &&
                (length <= (msg_config->max_bcopy - proto->only_hdr_size))) {
         /* bcopy */
@@ -610,6 +611,7 @@ ucs_status_t ucp_request_send_start(ucp_request_t *req, ssize_t max_short,
         UCS_PROFILE_REQUEST_EVENT(req, "start_bcopy_single", req->send.length);
 
         return UCS_OK;
+        // disable zcopy multi fragment proto
     } else if ((length < zcopy_max) &&
                ucs_likely(length <
                           msg_config->max_zcopy - proto->only_hdr_size)) {

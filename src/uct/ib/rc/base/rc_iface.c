@@ -28,6 +28,7 @@ static const char *uct_rc_fence_mode_values[] = {
 };
 
 ucs_config_field_t uct_rc_iface_common_config_table[] = {
+  //scatter2cqe is not supported yet by new AM handlers handling non contiguous rx descriptor.
   {UCT_IB_CONFIG_PREFIX, "RX_INLINE=0;TX_INLINE_RESP=64;RX_QUEUE_LEN=4095;SEG_SIZE=8256", NULL,
    ucs_offsetof(uct_rc_iface_common_config_t, super),
    UCS_CONFIG_TYPE_TABLE(uct_ib_iface_config_table)},
@@ -590,7 +591,7 @@ uct_rc_iface_recv_sg_mpools_init(uct_ib_iface_t *iface,
     status = uct_iface_mpool_init(&iface->super,
                                   &mp[UCT_IB_RX_SG_TL_HEADER_IDX],
                                   iface->config.rx_payload_offset +
-                                  iface->super.rx_allocator.config.header_length,
+                                  iface->super.rx_allocator.header_length,
                                   align_offset,
                                   alignment, &config->rx.mp, grow,
                                   uct_ib_iface_recv_desc_init, name);
@@ -599,7 +600,7 @@ uct_rc_iface_recv_sg_mpools_init(uct_ib_iface_t *iface,
         status = uct_iface_mpool_init(
                 &iface->super, &mp[UCT_IB_RX_SG_PAYLOAD_IDX],
                 sizeof(uct_iface_recv_desc_t) +
-                        iface->super.rx_allocator.config.size,
+                        iface->super.rx_allocator.payload_length,
                 0, UCS_SYS_CACHE_LINE_SIZE, &config->rx.mp, grow,
                 uct_iface_recv_desc_init, name);
 
@@ -607,8 +608,7 @@ uct_rc_iface_recv_sg_mpools_init(uct_ib_iface_t *iface,
             return status;
         }
 
-        iface->super.rx_allocator.config.allocator.arg =
-                &mp[UCT_IB_RX_SG_PAYLOAD_IDX];
+        iface->super.rx_allocator.allocator.arg = &mp[UCT_IB_RX_SG_PAYLOAD_IDX];
     }
 
     return status;
@@ -710,10 +710,7 @@ UCS_CLASS_INIT_FUNC(uct_rc_iface_t, uct_iface_ops_t *tl_ops,
         goto err;
     }
 
-    // TODO - Ask Yossi about Tag Matching, if we can remove the old mpool init
-    /* Create RX buffers mempool - We need it only because of Tag matching*/
-    status = uct_ib_iface_recv_mpool_init(&self->super, &config->super, params,
-                                          "rc_recv_desc", &self->rx.mp);
+    // TODO - Ask Yossi how determine if Tag Matching is enabled
 
     /* Create RX buffers mempool For SGE*/
     status = uct_rc_iface_recv_sg_mpools_init(&self->super, &config->super,
@@ -809,7 +806,6 @@ err_cleanup_tx_ops:
 err_destroy_tx_mp:
     ucs_mpool_cleanup(&self->tx.mp, 1);
 err_destroy_rx_mp:
-    ucs_mpool_cleanup(&self->rx.mp, 1);
     ucs_mpool_cleanup(&self->rx.mps[UCT_IB_RX_SG_TL_HEADER_IDX], 1);
     ucs_mpool_cleanup(&self->rx.mps[UCT_IB_RX_SG_PAYLOAD_IDX], 1);
 err:
@@ -872,7 +868,6 @@ static UCS_CLASS_CLEANUP_FUNC(uct_rc_iface_t)
     ops->cleanup_rx(self);
     uct_rc_iface_tx_ops_cleanup(self);
     ucs_mpool_cleanup(&self->tx.mp, 1);
-    ucs_mpool_cleanup(&self->rx.mp, 0); /* Cannot flush SRQ */
     ucs_mpool_cleanup(&self->rx.mps[UCT_IB_RX_SG_TL_HEADER_IDX], 0);
     ucs_mpool_cleanup(&self->rx.mps[UCT_IB_RX_SG_PAYLOAD_IDX], 0);
     ucs_mpool_cleanup(&self->tx.pending_mp, 1);

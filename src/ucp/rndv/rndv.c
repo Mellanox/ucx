@@ -1788,18 +1788,60 @@ err:
     goto out;
 }
 
+static UCS_F_ALWAYS_INLINE ucs_status_t
+ucp_rndv_rts_recv_desc_init(ucp_worker_h worker, void *data, size_t length,
+                            uct_am_callback_params_t *params, const char *name,
+                            ucp_recv_desc_t **rdesc_p)
+{
+    ucp_recv_desc_t *rdesc;
+    ucs_status_t status;
+    ucp_rndv_rts_hdr_t *rts;
+
+    rdesc = (ucp_recv_desc_t*)ucs_mpool_set_get_inline(&worker->am_mps, length);
+    if (rdesc == NULL) {
+        *rdesc_p = NULL; /* To suppress compiler warning */
+        ucs_error("ucp recv descriptor is not allocated");
+        return UCS_ERR_NO_MEMORY;
+    }
+
+    rdesc->release_desc_offset = 0;
+
+    /* No need to initialize rdesc->priv_length here, because it is only
+        * needed for releasing UCT descriptor. */
+    rdesc->flags = UCP_RECV_DESC_FLAG_RNDV |
+                   UCP_RECV_DESC_FLAG_AM_CB_INPROGRESS;
+    status       = UCS_OK;
+    rts          = (ucp_rndv_rts_hdr_t*)(rdesc + 1);
+    memcpy(rts, data, sizeof(ucp_am_hdr_t));
+    memcpy(UCS_PTR_BYTE_OFFSET(rts, sizeof(ucp_am_hdr_t)), params->payload,
+           length - sizeof(ucp_am_hdr_t));
+
+    ucp_recv_desc_set_name(rdesc, name);
+    rdesc->length = length + rdesc->release_desc_offset;
+    *rdesc_p      = rdesc;
+    return status;
+}
+
 UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_rts_handler,
-                 (arg, data, length, tl_flags, params), void *arg, void *data,
-                 size_t length, unsigned tl_flags,
+                 (arg, data, length, tl_flags, params),
+                 void *arg, void *data, size_t length, unsigned tl_flags,
                  uct_am_callback_params_t *params)
 {
     ucp_worker_h worker = arg;
-    void *payload       = params->payload;
     ucp_rndv_rts_hdr_t *rts_hdr;
+    ucp_recv_desc_t *rdesc;
+    ucs_status_t status;
 
-    ucp_am_concat_msg_hdr(data, payload, length, rts_hdr);
+    status = ucp_rndv_rts_recv_desc_init(worker, data, length, params,
+                                         "am_rndv_process_rts", &rdesc);
+    if (ucs_unlikely(status != UCS_OK)) {
+        return status;
+    }
+
+    rts_hdr = (ucp_rndv_rts_hdr_t*)(rdesc + 1);
     if (ucp_rndv_rts_is_am(rts_hdr)) {
-        return ucp_am_rndv_process_rts(arg, data, payload, length, tl_flags);
+        ucp_am_rndv_process_rts(arg, rts_hdr, length, tl_flags);
+        return UCS_OK;
     } else {
         ucs_assert(ucp_rndv_rts_is_tag(rts_hdr));
         return ucp_tag_rndv_process_rts(worker, rts_hdr, length, tl_flags);
@@ -1807,8 +1849,8 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_rts_handler,
 }
 
 UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_ats_handler,
-                 (arg, data, length, flags, params), void *arg, void *data,
-                 size_t length, unsigned flags,
+                 (arg, data, length, flags, params),
+                 void *arg, void *data, size_t length, unsigned flags,
                  uct_am_callback_params_t *params)
 {
     ucp_worker_h worker = arg;
@@ -1816,11 +1858,11 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_ats_handler,
     ucp_reply_hdr_t *rep_hdr;
     ucp_request_t *sreq;
 
-    ucp_am_concat_msg_hdr(data, payload, length, rep_hdr);
     if (worker->context->config.ext.proto_enable) {
         return ucp_proto_rndv_ats_handler(arg, data, length, flags);
     }
 
+    ucp_am_concat_msg_hdr(data, payload, length, rep_hdr);
     UCP_SEND_REQUEST_GET_BY_ID(&sreq, worker, rep_hdr->req_id, 1, return UCS_OK,
                                "RNDV ATS %p", rep_hdr);
 
@@ -2269,8 +2311,8 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_progress_rma_get_zcopy, (self),
 }
 
 UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_atp_handler,
-                 (arg, data, length, flags, params), void *arg, void *data,
-                 size_t length, unsigned flags,
+                 (arg, data, length, flags, params),
+                 void *arg, void *data, size_t length, unsigned flags,
                  uct_am_callback_params_t *params)
 {
     ucp_worker_h worker = arg;
@@ -2279,11 +2321,11 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_atp_handler,
     ucp_mem_desc_t *mdesc;
     ucp_reply_hdr_t *rep_hdr;
 
-    ucp_am_concat_msg_hdr(data, payload, length, rep_hdr);
     if (worker->context->config.ext.proto_enable) {
         return ucp_proto_rndv_rtr_handle_atp(arg, data, payload, length, flags);
     }
 
+    ucp_am_concat_msg_hdr(data, payload, length, rep_hdr);
     UCP_SEND_REQUEST_GET_BY_ID(&rtr_sreq, worker, rep_hdr->req_id, 1,
                                return UCS_OK, "RNDV ATP %p", rep_hdr);
 
@@ -2308,8 +2350,8 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_atp_handler,
 }
 
 UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_rtr_handler,
-                 (arg, data, length, flags, params), void *arg, void *data,
-                 size_t length, unsigned flags,
+                 (arg, data, length, flags, params),
+                 void *arg, void *data, size_t length, unsigned flags,
                  uct_am_callback_params_t *params)
 {
     ucp_worker_h worker   = arg;
@@ -2325,11 +2367,11 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_rtr_handler,
     uct_rkey_t uct_rkey;
     ucp_rndv_rtr_hdr_t *rndv_rtr_hdr;
 
-    ucp_am_concat_msg_hdr(data, payload, length, rndv_rtr_hdr);
     if (context->config.ext.proto_enable) {
         return ucp_proto_rndv_handle_rtr(arg, data, payload, length, flags);
     }
 
+    ucp_am_concat_msg_hdr(data, payload, length, rndv_rtr_hdr);
     UCP_SEND_REQUEST_GET_BY_ID(&sreq, arg, rndv_rtr_hdr->sreq_id, 0,
                                return UCS_OK, "RNDV RTR %p", rndv_rtr_hdr);
     ep        = sreq->send.ep;
@@ -2437,8 +2479,8 @@ out_send:
 }
 
 UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_data_handler,
-                 (arg, data, length, flags, params), void *arg, void *data,
-                 size_t length, unsigned flags,
+                 (arg, data, length, flags, params),
+                 void *arg, void *data, size_t length, unsigned flags,
                  uct_am_callback_params_t *params)
 {
     ucp_worker_h worker = arg;
@@ -2448,11 +2490,11 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_data_handler,
     ucs_status_t status;
     ucp_request_data_hdr_t *rndv_data_hdr;
 
-    ucp_am_concat_msg_hdr(data, payload, length, rndv_data_hdr);
     if (worker->context->config.ext.proto_enable) {
         return ucp_proto_rndv_handle_data(arg, data, payload, length, flags);
     }
 
+    ucp_am_concat_msg_hdr(data, payload, length, rndv_data_hdr);
     UCP_SEND_REQUEST_GET_BY_ID(&rndv_req, worker, rndv_data_hdr->req_id, 0,
                                return UCS_OK, "RNDV data %p", rndv_data_hdr);
 
@@ -2485,8 +2527,8 @@ static void ucp_rndv_dump_rkey(const void *rkey_buf, const void *rkey_end,
 }
 
 static void ucp_rndv_dump(ucp_worker_h worker, uct_am_trace_type_t type,
-                          uint8_t id, const void *data, const void *payload,
-                          size_t length, char *buffer, size_t max)
+                          uint8_t id, const void *data, size_t length,
+                          char *buffer, size_t max)
 {
     UCS_STRING_BUFFER_FIXED(strb, buffer, max);
     const ucp_rndv_rts_hdr_t *rndv_rts_hdr    = data;

@@ -423,9 +423,7 @@ ucs_status_t ucp_proto_rndv_handle_data(void *arg, void *data, void *payload,
 {
     ucp_worker_h worker = arg;
     size_t recv_len     = length - sizeof(ucp_request_data_hdr_t);
-    size_t payload_d = sizeof(ucp_request_data_hdr_t) > sizeof(ucp_am_hdr_t) ?
-                               sizeof(ucp_request_data_hdr_t) -
-                                       sizeof(ucp_am_hdr_t) : 0;
+    size_t data_offset = sizeof(ucp_request_data_hdr_t) - sizeof(ucp_am_hdr_t);
     const ucp_proto_rndv_rtr_priv_t *rpriv;
     ucs_status_t status;
     ucp_request_t *req;
@@ -437,7 +435,8 @@ ucs_status_t ucp_proto_rndv_handle_data(void *arg, void *data, void *payload,
 
     status = ucp_datatype_iter_unpack(&req->send.state.dt_iter, worker,
                                       recv_len, rndv_data_hdr->offset,
-                                      UCS_PTR_BYTE_OFFSET(payload, payload_d));
+                                      UCS_PTR_BYTE_OFFSET(payload,
+                                                          data_offset));
     if (status != UCS_OK) {
         ucp_proto_request_abort(req, status);
         return UCS_OK;
