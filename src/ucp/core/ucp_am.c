@@ -1612,8 +1612,8 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_am_long_middle_handler,
     return status;
 }
 
-ucs_status_t ucp_am_rndv_process_rts(void *arg, void *data, size_t length,
-                                     unsigned tl_flags)
+void ucp_am_rndv_process_rts(void *arg, void *data, size_t length,
+                             unsigned tl_flags)
 {
     ucp_rndv_rts_hdr_t *rts = data;
     ucp_worker_h worker     = arg;
@@ -1663,7 +1663,7 @@ ucs_status_t ucp_am_rndv_process_rts(void *arg, void *data, size_t length,
                     ucs_status_string(status));
 
         desc->flags &= ~UCP_RECV_DESC_FLAG_AM_CB_INPROGRESS;
-        return UCS_OK;
+        return;
     } else if (desc->flags & UCP_RECV_DESC_FLAG_RECV_STARTED) {
         /* User initiated rendezvous receive in the callback and it is
          * already completed. No need to save the descriptor for further use
@@ -1696,8 +1696,6 @@ out:
             ucp_recv_desc_release(desc);
         }
     }
-
-    return UCS_OK;
 }
 
 UCP_DEFINE_AM(UCP_FEATURE_AM, UCP_AM_ID_AM_SINGLE,
