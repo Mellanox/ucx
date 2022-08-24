@@ -115,7 +115,7 @@ static inline void release_held_data_descs(ucp_worker_h worker)
 {
     int i;
 
-    if (!user_allocator) {
+    if (user_allocator) {
         return;
     }
 
