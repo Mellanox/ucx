@@ -1196,7 +1196,8 @@ out:
 static UCS_F_ALWAYS_INLINE ucs_status_t
 ucp_am_invoke_cb(ucp_worker_h worker, uint16_t am_id, void *user_hdr,
                  uint32_t user_hdr_length, void *data, size_t data_length,
-                 ucp_ep_h reply_ep, uint64_t recv_flags)
+                 ucp_ep_h reply_ep, uint64_t recv_flags,
+                 uct_am_callback_params_t *uct_cb_params)
 {
     ucp_am_entry_t *am_cb = &ucs_array_elem(&worker->am.cbs, am_id);
     ucp_am_recv_param_t param;
@@ -1209,6 +1210,7 @@ ucp_am_invoke_cb(ucp_worker_h worker, uint16_t am_id, void *user_hdr,
     if (ucs_likely(am_cb->flags & UCP_AM_CB_PRIV_FLAG_NBX)) {
         param.recv_attr = recv_flags;
         param.reply_ep  = reply_ep;
+        param.payload   = uct_cb_params->payload;
 
         return am_cb->cb(am_cb->context, user_hdr, user_hdr_length, data,
                          data_length, &param);
@@ -1221,8 +1223,8 @@ ucp_am_invoke_cb(ucp_worker_h worker, uint16_t am_id, void *user_hdr,
         return UCS_OK;
     }
 
-    flags = (recv_flags & UCP_AM_RECV_ATTR_FLAG_DATA) ?
-            UCP_CB_PARAM_FLAG_DATA : 0;
+    flags = (recv_flags & UCP_AM_RECV_ATTR_FLAG_DATA) ? UCP_CB_PARAM_FLAG_DATA :
+                                                        0;
 
     return am_cb->cb_old(am_cb->context, data, data_length, reply_ep, flags);
 }
@@ -1275,14 +1277,13 @@ static UCS_F_ALWAYS_INLINE ucs_status_t ucp_am_handler_common(
                       worker, am_id);
             return UCS_OK;
         }
-        desc->payload = params->payload;
         desc->length  = data_length;
         recv_flags |= UCP_AM_RECV_ATTR_FLAG_DATA;
     }
 
     status = ucp_am_invoke_cb(worker, am_id, user_hdr, user_hdr_size,
-                              params->payload, data_length, reply_ep,
-                              recv_flags);
+                              desc + 1, data_length, reply_ep,
+                              recv_flags, params);
     if (desc == NULL) {
         if (ucs_unlikely(status == UCS_INPROGRESS)) {
             ucs_error("can't hold data, FLAG_DATA flag is not set");
@@ -1433,7 +1434,7 @@ ucp_am_handle_unfinished(ucp_worker_h worker, ucp_recv_desc_t *first_rdesc,
     status                           = ucp_am_invoke_cb(worker, am_id, user_hdr,
                                                         user_hdr_length,
                                                         payload, total_size,
-                                                        reply_ep, recv_flags);
+                                                        reply_ep, recv_flags, NULL);
     if (!ucp_am_rdesc_in_progress(first_rdesc, status)) {
         /* user does not need to hold this data */
         ucp_am_release_long_desc(first_rdesc);
