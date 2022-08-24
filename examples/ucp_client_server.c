@@ -111,7 +111,8 @@ static void usage(void);
  */
 static void memory_allocator_free(void *obj);
 
-void release_held_rdescs(ucp_worker_h worker) {
+static inline void release_held_data_descs(ucp_worker_h worker)
+{
     int i;
 
     if (!user_allocator) {
@@ -122,6 +123,16 @@ void release_held_rdescs(ucp_worker_h worker) {
         ucp_am_data_release(worker, held_rdescs[i]);
     }
     available_rdesc_idx = 0;
+}
+
+static inline void hold_data_desc(void *data_desc)
+{
+    ucs_assertv(
+            available_rdesc_idx < ALLOCATOR_NUM_OF_BUFFERS,
+            "Number of held data descs exceed hel_rdescs array capacicty %d",
+            ALLOCATOR_NUM_OF_BUFFERS);
+    held_rdescs[available_rdesc_idx] = data_desc;
+    available_rdesc_idx++;
 }
 
 void buffer_free(ucp_dt_iov_t *iov)
@@ -502,7 +513,7 @@ ucs_status_t ucp_am_data_cb(void *arg, const void *header, size_t header_length,
     size_t idx;
     size_t offset;
 
-    release_held_rdescs((ucp_worker_h)arg);
+    release_held_data_descs((ucp_worker_h)arg);
 
     if (length != iov_cnt * test_string_length) {
         fprintf(stderr, "received wrong data length %ld (expected %ld)", length,
@@ -544,8 +555,7 @@ ucs_status_t ucp_am_data_cb(void *arg, const void *header, size_t header_length,
     if (user_allocator) {
         memory_allocator_free(param->payload);
     } else {
-        held_rdescs[available_rdesc_idx] = data;
-        available_rdesc_idx++;
+        hold_data_desc(data);
     }
 
     return UCS_INPROGRESS;
@@ -1197,7 +1207,7 @@ err_allocator:
         memory_allocator_destroy(allocator_obj);
     }
 err:
-    release_held_rdescs(ucp_data_worker);
+    release_held_data_descs(ucp_data_worker);
     return ret;
 }
 
