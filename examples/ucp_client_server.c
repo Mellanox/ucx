@@ -649,6 +649,11 @@ static void usage()
     fprintf(stderr, "  -v Number of buffers in a single data "
                     "transfer function call. (default = %ld).\n",
                     iov_cnt);
+    fprintf(stderr, "  -u Use this option to run the example with rx buffers allocator implementing the user allocator API.\n"
+                    "     When not using this option the example will run with a default allocator that is not exposed.\n"
+                    "     When using the default allocator be sure to run the example with the fallowing env variables:\n"
+                    "     UCX_DC_MLX5_RX_BUFS_GROW=32768\n"
+                    "     UCX_DC_MLX5_RX_MAX_BUFS=32768\n");
     print_common_help();
     fprintf(stderr, "\n");
 }
@@ -1284,42 +1289,15 @@ int main(int argc, char **argv)
     send_recv_type_t send_recv_type = CLIENT_SERVER_SEND_RECV_DEFAULT;
     char *server_addr = NULL;
     char *listen_addr = NULL;
-    char num_of_buffers[256];
     int ret;
 
     /* UCP objects */
-    ucp_config_t *config = NULL;
     ucp_context_h ucp_context;
     ucp_worker_h  ucp_worker;
 
     ret = parse_cmd(argc, argv, &server_addr, &listen_addr, &send_recv_type);
     if (ret != 0) {
         goto err;
-    }
-
-    if (!user_allocator) {
-        ret = ucp_config_read(NULL, NULL, &config);
-        if (ret != UCS_OK) {
-            goto err;
-        }
-
-        ret = ucp_config_modify(config, "MAX_CHUNK_SIZE", "-1");
-        if (ret != UCS_OK) {
-            goto err;
-        }
-
-        snprintf(num_of_buffers, 256, "%d", ALLOCATOR_NUM_OF_BUFFERS);
-        ret = ucp_config_modify(config, "UCX_DC_MLX5_RX_BUFS_GROW",
-                                num_of_buffers);
-        if (ret != UCS_OK) {
-            goto err;
-        }
-
-        ret = ucp_config_modify(config, "UCX_DC_MLX5_RX_MAX_BUFS",
-                                num_of_buffers);
-        if (ret != UCS_OK) {
-            goto err;
-        }
     }
 
     /* Initialize the UCX required objects */
@@ -1340,8 +1318,5 @@ int main(int argc, char **argv)
     ucp_worker_destroy(ucp_worker);
     ucp_cleanup(ucp_context);
 err:
-    if (config) {
-        ucp_config_release(config);
-    }
     return ret;
 }
