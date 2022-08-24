@@ -218,11 +218,12 @@ uct_rc_mlx5_iface_update_srq_res(uct_rc_iface_t *iface, uct_ib_mlx5_srq_t *srq,
     *srq->db                    = htonl(srq->sw_pi);
 }
 
-static UCS_F_ALWAYS_INLINE void
-uct_rc_mlx5_iface_srq_post_recv_check_union(uct_rc_mlx5_iface_common_t *iface)
+unsigned uct_rc_mlx5_iface_srq_post_recv(uct_rc_mlx5_iface_common_t *iface)
 {
     uct_ib_mlx5_srq_t *srq   = &iface->rx.srq;
     uct_rc_iface_t *rc_iface = &iface->super;
+    uct_ib_mlx5_srq_seg_t *seg;
+    uint16_t count, wqe_index, next_index;
 
     /* Make sure the union is right */
     UCS_STATIC_ASSERT(ucs_offsetof(uct_ib_mlx5_srq_seg_t, mlx5_srq.next_wqe_index) ==
@@ -232,16 +233,6 @@ uct_rc_mlx5_iface_srq_post_recv_check_union(uct_rc_mlx5_iface_common_t *iface)
 
     ucs_assert(UCS_CIRCULAR_COMPARE16(srq->ready_idx, <=, srq->free_idx));
     ucs_assert(rc_iface->rx.srq.available > 0);
-}
-
-unsigned uct_rc_mlx5_iface_srq_post_recv(uct_rc_mlx5_iface_common_t *iface)
-{
-    uct_ib_mlx5_srq_t *srq   = &iface->rx.srq;
-    uct_rc_iface_t *rc_iface = &iface->super;
-    uct_ib_mlx5_srq_seg_t *seg;
-    uint16_t count, wqe_index, next_index;
-
-    uct_rc_mlx5_iface_srq_post_recv_check_union(iface);
 
     wqe_index = srq->ready_idx;
     for (;;) {
@@ -257,8 +248,15 @@ unsigned uct_rc_mlx5_iface_srq_post_recv(uct_rc_mlx5_iface_common_t *iface)
             srq->free_idx  = next_index;
         }
 
-        if (uct_rc_mlx5_iface_srq_set_seg(iface, seg) != UCS_OK) {
-            break;
+        //TODO - replace this branch to improve performance
+        if (UCT_RC_MLX5_MP_ENABLED(iface)) {
+            if (uct_rc_mlx5_iface_srq_set_seg(iface, seg) != UCS_OK) {
+                break;
+            }
+        } else {
+            if (uct_rc_mlx5_iface_srq_set_seg_sge(iface, seg) != UCS_OK) {
+                break;
+            }
         }
 
         wqe_index = next_index;
@@ -290,78 +288,15 @@ unsigned uct_rc_mlx5_iface_srq_post_recv_ll(uct_rc_mlx5_iface_common_t *iface)
         }
         seg = uct_ib_mlx5_srq_get_wqe(srq, next_index);
 
-        if (uct_rc_mlx5_iface_srq_set_seg(iface, seg) != UCS_OK) {
-            break;
-        }
-
-        wqe_index = next_index;
-        count++;
-    }
-
-    uct_rc_mlx5_iface_update_srq_res(rc_iface, srq, wqe_index, count);
-    return count;
-}
-
-unsigned uct_rc_mlx5_iface_srq_post_recv_sge(uct_rc_mlx5_iface_common_t *iface)
-{
-    uct_ib_mlx5_srq_t *srq   = &iface->rx.srq;
-    uct_rc_iface_t *rc_iface = &iface->super;
-    uct_ib_mlx5_srq_seg_t *seg;
-    uint16_t count = 0, wqe_index, next_index;
-
-    uct_rc_mlx5_iface_srq_post_recv_check_union(iface);
-
-    wqe_index = srq->ready_idx;
-    for (;;) {
-        next_index = wqe_index + 1;
-        seg        = uct_ib_mlx5_srq_get_wqe(srq, next_index);
-        if (UCS_CIRCULAR_COMPARE16(next_index, >, srq->free_idx)) {
-            if (!seg->srq.free) {
+        //TODO - replace this branch to improve performance
+        if (UCT_RC_MLX5_MP_ENABLED(iface)) {
+            if (uct_rc_mlx5_iface_srq_set_seg(iface, seg) != UCS_OK) {
                 break;
             }
-
-            ucs_assert(next_index == (uint16_t)(srq->free_idx + 1));
-            seg->srq.free = 0;
-            srq->free_idx = next_index;
-        }
-
-        if (uct_rc_mlx5_iface_srq_set_seg_sge(iface, seg) != UCS_OK) {
+        } else {
+            if (uct_rc_mlx5_iface_srq_set_seg_sge(iface, seg) != UCS_OK) {
             break;
         }
-
-        wqe_index = next_index;
-    }
-
-    count = wqe_index - srq->sw_pi;
-    uct_rc_mlx5_iface_update_srq_res(rc_iface, srq, wqe_index, count);
-    ucs_assert(uct_ib_mlx5_srq_get_wqe(srq, srq->mask)->srq.next_wqe_index ==
-               0);
-    return count;
-}
-
-unsigned
-uct_rc_mlx5_iface_srq_post_recv_ll_sge(uct_rc_mlx5_iface_common_t *iface)
-{
-    uct_ib_mlx5_srq_t *srq     = &iface->rx.srq;
-    uct_rc_iface_t *rc_iface   = &iface->super;
-    uct_ib_mlx5_srq_seg_t *seg = NULL;
-    uint16_t count             = 0;
-    uint16_t wqe_index, next_index;
-
-    ucs_assert(rc_iface->rx.srq.available > 0);
-
-    wqe_index = srq->ready_idx;
-    seg       = uct_ib_mlx5_srq_get_wqe(srq, wqe_index);
-    count     = 0;
-    for (;;) {
-        next_index = ntohs(seg->srq.next_wqe_index);
-        if (next_index == (srq->free_idx & srq->mask)) {
-            break;
-        }
-        seg = uct_ib_mlx5_srq_get_wqe(srq, next_index);
-
-        if (uct_rc_mlx5_iface_srq_set_seg_sge(iface, seg) != UCS_OK) {
-            break;
         }
 
         wqe_index = next_index;
@@ -382,7 +317,7 @@ void uct_rc_mlx5_iface_common_prepost_recvs(uct_rc_mlx5_iface_common_t *iface)
 
     iface->super.rx.srq.available = iface->super.rx.srq.quota;
     iface->super.rx.srq.quota     = 0;
-    uct_rc_mlx5_iface_srq_common_post_recv(iface);
+    uct_rc_mlx5_iface_srq_post_recv(iface);
 }
 
 #define UCT_RC_MLX5_DEFINE_ATOMIC_LE_HANDLER(_bits) \

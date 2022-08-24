@@ -1429,24 +1429,6 @@ uct_rc_mlx5_iface_handle_filler_cqe(uct_rc_mlx5_iface_common_t *iface,
 #endif /* IBV_HW_TM */
 
 static UCS_F_ALWAYS_INLINE unsigned
-uct_rc_mlx5_iface_srq_common_post_recv(uct_rc_mlx5_iface_common_t *iface) {
-    if (UCT_RC_MLX5_MP_ENABLED(iface)) {
-        return uct_rc_mlx5_iface_srq_post_recv(iface);
-    } else {
-        return uct_rc_mlx5_iface_srq_post_recv_sge(iface);
-    }
-}
-
-static UCS_F_ALWAYS_INLINE unsigned
-uct_rc_mlx5_iface_srq_common_post_recv_ll(uct_rc_mlx5_iface_common_t *iface) {
-    if (UCT_RC_MLX5_MP_ENABLED(iface)) {
-        return uct_rc_mlx5_iface_srq_post_recv_ll(iface);
-    } else {
-        return uct_rc_mlx5_iface_srq_post_recv_ll_sge(iface);
-    }
-}
-
-static UCS_F_ALWAYS_INLINE unsigned
 uct_rc_mlx5_iface_common_poll_rx(uct_rc_mlx5_iface_common_t *iface,
                                  int poll_flags)
 {
@@ -1584,9 +1566,9 @@ out:
     max_batch = iface->super.super.config.rx_max_batch;
     if (ucs_unlikely(iface->super.rx.srq.available >= max_batch)) {
         if (poll_flags & UCT_RC_MLX5_POLL_FLAG_LINKED_LIST) {
-            uct_rc_mlx5_iface_srq_common_post_recv_ll(iface);
+            uct_rc_mlx5_iface_srq_post_recv_ll(iface);
         } else {
-            uct_rc_mlx5_iface_srq_common_post_recv(iface);
+            uct_rc_mlx5_iface_srq_post_recv(iface);
         }
     }
     return count;
