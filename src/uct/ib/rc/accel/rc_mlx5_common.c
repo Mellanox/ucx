@@ -295,8 +295,8 @@ unsigned uct_rc_mlx5_iface_srq_post_recv_ll(uct_rc_mlx5_iface_common_t *iface)
             }
         } else {
             if (uct_rc_mlx5_iface_srq_set_seg_sge(iface, seg) != UCS_OK) {
-            break;
-        }
+                break;
+            }
         }
 
         wqe_index = next_index;
@@ -654,8 +654,7 @@ uct_rc_mlx5_common_iface_init_rx(uct_rc_mlx5_iface_common_t *iface,
 {
     uct_ib_mlx5_md_t *md = ucs_derived_of(iface->super.super.super.md, uct_ib_mlx5_md_t);
     ucs_status_t status;
-    uint32_t head;
-    uint32_t tail;
+    size_t sg_byte_count[iface->tm.mp.num_strides];
 
     ucs_assert(iface->config.srq_topo != UCT_RC_MLX5_SRQ_TOPO_CYCLIC);
 
@@ -665,14 +664,10 @@ uct_rc_mlx5_common_iface_init_rx(uct_rc_mlx5_iface_common_t *iface,
         goto err;
     }
 
+    uct_ib_mlx5_srq_init_sg_byte_counts(iface, sg_byte_count);
     status = uct_ib_mlx5_verbs_srq_init(&iface->rx.srq, iface->rx.srq.verbs.srq,
-                                        iface->tm.mp.num_strides, &head, &tail);
-    if (status != UCS_OK) {
-        goto err_free_srq;
-    }
-
-    uct_ib_mlx5_srq_buff_init_common(iface, head, tail);
-
+                                        sg_byte_count,
+                                        iface->tm.mp.num_strides);
     if (status != UCS_OK) {
         goto err_free_srq;
     }
@@ -978,8 +973,7 @@ ucs_status_t uct_rc_mlx5_init_rx_tm(uct_rc_mlx5_iface_common_t *iface,
 {
     uct_ib_md_t *md = uct_ib_iface_md(&iface->super.super);
     ucs_status_t status;
-    uint32_t head;
-    uint32_t tail;
+    size_t sg_byte_count[iface->tm.mp.num_strides];
 
     ucs_assert(iface->config.srq_topo != UCT_RC_MLX5_SRQ_TOPO_CYCLIC);
 
@@ -1012,15 +1006,13 @@ ucs_status_t uct_rc_mlx5_init_rx_tm(uct_rc_mlx5_iface_common_t *iface,
 
     iface->super.rx.srq.quota = srq_attr->attr.max_wr;
 
+    uct_ib_mlx5_srq_init_sg_byte_counts(iface, sg_byte_count);
     status = uct_ib_mlx5_verbs_srq_init(&iface->rx.srq, iface->rx.srq.verbs.srq,
-                                        iface->tm.mp.num_strides, &head, &tail);
+                                        sg_byte_count,
+                                        iface->tm.mp.num_strides);
     if (status != UCS_OK) {
         goto err_free_srq;
     }
-
-    uct_ib_mlx5_srq_buff_init(&iface->rx.srq, head, tail,
-                              iface->super.super.config.seg_size,
-                              iface->tm.mp.num_strides);
 
     iface->rx.srq.type        = UCT_IB_MLX5_OBJ_TYPE_VERBS;
     ucs_debug("Tag Matching enabled: tag list size %d", iface->tm.num_tags);

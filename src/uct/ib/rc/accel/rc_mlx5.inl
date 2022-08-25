@@ -1838,21 +1838,20 @@ uct_rc_mlx5_iface_common_atomic_data(unsigned opcode, unsigned size, uint64_t va
     return UCS_OK;
 }
 
-static void UCS_F_ALWAYS_INLINE
-uct_ib_mlx5_srq_buff_init_common(uct_rc_mlx5_iface_common_t *iface, uint32_t head, uint32_t tail) {
-    const size_t hdr_len = uct_ib_iface_tl_hdr_length(&iface->super.super);
-    size_t sge_sizes[UCT_IB_RECV_SG_LIST_LEN];
+static void UCS_F_ALWAYS_INLINE uct_ib_mlx5_srq_init_sg_byte_counts(
+        uct_rc_mlx5_iface_common_t *iface, size_t *sg_byte_count)
+{
+    int i;
 
     if (UCT_RC_MLX5_MP_ENABLED(iface)) {
-        uct_ib_mlx5_srq_buff_init(&iface->rx.srq, head, tail,
-                                  iface->super.super.config.seg_size,
-                                  iface->tm.mp.num_strides);
+        for (i = 0; i < iface->tm.mp.num_strides; ++i) {
+            sg_byte_count[i] = iface->super.super.config.seg_size;
+        }
     } else {
-        sge_sizes[UCT_IB_RX_SG_TL_HEADER_IDX] = hdr_len;
-        sge_sizes[UCT_IB_RX_SG_PAYLOAD_IDX] =
+        sg_byte_count[UCT_IB_RX_SG_TL_HEADER_IDX] = uct_ib_iface_tl_hdr_length(
+                &iface->super.super);
+        sg_byte_count[UCT_IB_RX_SG_PAYLOAD_IDX] =
                 iface->super.super.super.rx_allocator.payload_length;
-        uct_ib_mlx5_srq_buff_init_sg(&iface->rx.srq, head, tail, sge_sizes,
-                                     iface->tm.mp.num_strides);
     }
 }
 
