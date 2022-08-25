@@ -1311,9 +1311,11 @@ int main(int argc, char **argv)
     /*
      * Modify environment to prevent RX hdr and payload mpools from growing. 
      */
-    snprintf(chunk_size_env, 256, "UCX_DC_MLX5_RX_BUFS_GROW=%d", ALLOCATOR_NUM_OF_BUFFERS);
+    snprintf(chunk_size_env, 256, "UCX_DC_MLX5_RX_BUFS_GROW=%d",
+             ALLOCATOR_NUM_OF_BUFFERS);
     putenv(chunk_size_env);
-    snprintf(max_buffs_env, 256, "UCX_DC_MLX5_RX_MAX_BUFS=%d", ALLOCATOR_NUM_OF_BUFFERS);
+    snprintf(max_buffs_env, 256, "UCX_DC_MLX5_RX_MAX_BUFS=%d",
+             ALLOCATOR_NUM_OF_BUFFERS);
     putenv(max_buffs_env);
 
     ret = parse_cmd(argc, argv, &server_addr, &listen_addr, &send_recv_type);
