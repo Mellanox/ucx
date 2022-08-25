@@ -660,10 +660,7 @@ static void usage()
                     "transfer function call. (default = %ld).\n",
                     iov_cnt);
     fprintf(stderr, "  -u Use this option to run the example with rx buffers allocator implementing the user allocator API.\n"
-                    "     When not using this option the example will run with a default allocator that is not exposed.\n"
-                    "     When using the default allocator be sure to run the example with the fallowing env variables:\n"
-                    "     UCX_DC_MLX5_RX_BUFS_GROW=32768\n"
-                    "     UCX_DC_MLX5_RX_MAX_BUFS=32768\n");
+                    "     When not using this option the example will run with a default allocator that is not exposed.\n");
     print_common_help();
     fprintf(stderr, "\n");
 }
@@ -1300,10 +1297,20 @@ int main(int argc, char **argv)
     char *server_addr = NULL;
     char *listen_addr = NULL;
     int ret;
+    char chunk_size_env[256];
+    char max_buffs_env[256];
 
     /* UCP objects */
     ucp_context_h ucp_context;
     ucp_worker_h  ucp_worker;
+
+    /*
+     * Modify environment to prevent RX hdr and payload mpools from growing. 
+     */
+    snprintf(chunk_size_env, 256, "UCX_DC_MLX5_RX_BUFS_GROW=%d", ALLOCATOR_NUM_OF_BUFFERS);
+    putenv(chunk_size_env);
+    snprintf(max_buffs_env, 256, "UCX_DC_MLX5_RX_MAX_BUFS=%d", ALLOCATOR_NUM_OF_BUFFERS);
+    putenv(max_buffs_env);
 
     ret = parse_cmd(argc, argv, &server_addr, &listen_addr, &send_recv_type);
     if (ret != 0) {
