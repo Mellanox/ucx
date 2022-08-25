@@ -561,7 +561,8 @@ static ucs_status_t
 uct_rc_iface_recv_sg_mpools_init(uct_ib_iface_t *iface,
                                  const uct_ib_iface_config_t *config,
                                  const uct_iface_params_t *params,
-                                 const char *name, ucs_mpool_t *mp)
+                                 const char *name, ucs_mpool_t *tl_hdr_mpool,
+                                 ucs_mpool_t *payload_mpool)
 {
     size_t align_offset, alignment;
     ucs_status_t status;
@@ -588,17 +589,16 @@ uct_rc_iface_recv_sg_mpools_init(uct_ib_iface_t *iface,
         return status;
     }
 
-    status = uct_iface_mpool_init(&iface->super,
-                                  &mp[UCT_IB_RX_SG_TL_HEADER_IDX],
-                                  iface->config.rx_payload_offset +
-                                  iface->super.rx_allocator.header_length,
-                                  align_offset,
-                                  alignment, &config->rx.mp, grow,
-                                  uct_ib_iface_recv_desc_init, name);
+    status = uct_iface_mpool_init(
+            &iface->super, tl_hdr_mpool,
+            iface->config.rx_payload_offset +
+                    iface->super.rx_allocator.header_length,
+            align_offset, alignment, &config->rx.mp, grow,
+            uct_ib_iface_recv_desc_init, name);
 
     if ((params->field_mask & UCT_IFACE_PARAM_FIELD_USER_ALLOCATOR) == 0) {
         status = uct_iface_mpool_init(
-                &iface->super, &mp[UCT_IB_RX_SG_PAYLOAD_IDX],
+                &iface->super, payload_mpool,
                 sizeof(uct_iface_recv_desc_t) +
                         iface->super.rx_allocator.payload_length,
                 0, UCS_SYS_CACHE_LINE_SIZE, &config->rx.mp, grow,
@@ -608,7 +608,7 @@ uct_rc_iface_recv_sg_mpools_init(uct_ib_iface_t *iface,
             return status;
         }
 
-        iface->super.rx_allocator.allocator.arg = &mp[UCT_IB_RX_SG_PAYLOAD_IDX];
+        iface->super.rx_allocator.allocator.arg = payload_mpool;
     }
 
     return status;
@@ -715,7 +715,7 @@ UCS_CLASS_INIT_FUNC(uct_rc_iface_t, uct_iface_ops_t *tl_ops,
     /* Create RX buffers mempool For SGE*/
     status = uct_rc_iface_recv_sg_mpools_init(&self->super, &config->super,
                                               params, "rc_recv_sg_descs",
-                                              self->rx.mps);
+                                              &self->rx.mp, &self->rx.payload_mp);
     if (status != UCS_OK) {
         goto err;
     }
@@ -806,8 +806,8 @@ err_cleanup_tx_ops:
 err_destroy_tx_mp:
     ucs_mpool_cleanup(&self->tx.mp, 1);
 err_destroy_rx_mp:
-    ucs_mpool_cleanup(&self->rx.mps[UCT_IB_RX_SG_TL_HEADER_IDX], 1);
-    ucs_mpool_cleanup(&self->rx.mps[UCT_IB_RX_SG_PAYLOAD_IDX], 1);
+    ucs_mpool_cleanup(&self->rx.mp, 1);
+    ucs_mpool_cleanup(&self->rx.payload_mp, 1);
 err:
     return status;
 }
@@ -868,8 +868,8 @@ static UCS_CLASS_CLEANUP_FUNC(uct_rc_iface_t)
     ops->cleanup_rx(self);
     uct_rc_iface_tx_ops_cleanup(self);
     ucs_mpool_cleanup(&self->tx.mp, 1);
-    ucs_mpool_cleanup(&self->rx.mps[UCT_IB_RX_SG_TL_HEADER_IDX], 0);
-    ucs_mpool_cleanup(&self->rx.mps[UCT_IB_RX_SG_PAYLOAD_IDX], 0);
+    ucs_mpool_cleanup(&self->rx.mp, 0);
+    ucs_mpool_cleanup(&self->rx.payload_mp, 0);
     ucs_mpool_cleanup(&self->tx.pending_mp, 1);
 }
 

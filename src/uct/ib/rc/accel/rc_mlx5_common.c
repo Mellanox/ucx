@@ -121,7 +121,7 @@ uct_rc_mlx5_iface_seg_set_sge_header_entry(uct_rc_mlx5_iface_common_t *iface,
     void *hdr;
 
     UCT_TL_IFACE_GET_RX_DESC(&iface->super.super.super,
-                             &iface->super.rx.mps[UCT_IB_RX_SG_TL_HEADER_IDX],
+                             &iface->super.rx.mp,
                              desc, return UCS_ERR_NO_MEMORY);
     hdr           = uct_ib_iface_recv_desc_hdr(&iface->super.super, desc);
     seg->srq.desc = desc;

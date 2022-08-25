@@ -259,8 +259,13 @@ struct uct_rc_iface {
     } tx;
 
     struct {
+        /*tl header buffers mpool*/
         ucs_mpool_t          mp;
-        ucs_mpool_t          mps[UCT_IB_RECV_SG_LIST_LEN];
+
+        /* payload buffers mpool.
+         * Used only with default RX allocator
+         */
+        ucs_mpool_t          payload_mp;
         uct_rc_srq_t         srq;
     } rx;
 
