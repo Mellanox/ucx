@@ -660,7 +660,11 @@ static void usage()
                     "transfer function call. (default = %ld).\n",
                     iov_cnt);
     fprintf(stderr, "  -u Use this option to run the example with rx buffers allocator implementing the user allocator API.\n"
-                    "     When not using this option the example will run with a default allocator that is not exposed.\n");
+                    "     When not using this option the example will run with a default allocator that is not exposed.\n"
+                    "     To prevent UCX mpools from growing one should modify the following Env variables to the same value:\n"
+                    "     UCX_DC_MLX5_RX_BUFS_GROW\n"
+                    "     UCX_DC_MLX5_RX_MAX_BUFS\n"
+                    "     The value should match the max number of allocated payload buffers.\n");
     print_common_help();
     fprintf(stderr, "\n");
 }
