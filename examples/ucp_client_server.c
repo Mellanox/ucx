@@ -114,7 +114,7 @@ static void memory_allocator_free(void *obj);
 /* 
  * Release the data descs that was held by AM CB.
  */
-static inline void release_held_data_descs(ucp_worker_h worker)
+static void release_held_data_descs(ucp_worker_h worker)
 {
     int i;
 
@@ -131,7 +131,7 @@ static inline void release_held_data_descs(ucp_worker_h worker)
 /* 
  * Save data desc for future release.
  */
-static inline void hold_data_desc(void *data_desc)
+static void hold_data_desc(void *data_desc)
 {
     ucs_assertv(next_held_data_desc_idx < ALLOCATOR_NUM_OF_BUFFERS,
                 "Number of held data descs exceed held_data_descs array "
@@ -659,12 +659,7 @@ static void usage()
     fprintf(stderr, "  -v Number of buffers in a single data "
                     "transfer function call. (default = %ld).\n",
                     iov_cnt);
-    fprintf(stderr, "  -u Use this option to run the example with rx buffers allocator implementing the user allocator API.\n"
-                    "     When not using this option the example will run with a default allocator that is not exposed.\n"
-                    "     To prevent UCX mpools from growing one should modify the following Env variables to the same value:\n"
-                    "     UCX_DC_MLX5_RX_BUFS_GROW\n"
-                    "     UCX_DC_MLX5_RX_MAX_BUFS\n"
-                    "     The value should match the max number of allocated payload buffers.\n");
+    fprintf(stderr, "  -u Use this option to run the example with rx buffers allocator implementing the user allocator API.\n");
     print_common_help();
     fprintf(stderr, "\n");
 }
@@ -824,7 +819,7 @@ typedef struct memory_allocator_obj {
     ucp_mem_h     memh;
 } ucp_worker_memory_allocator_obj_t;
 
-ucs_status_t
+static ucs_status_t
 memory_allocator_chunk_alloc(ucs_mpool_t *mp, size_t *size_p, void **chunk_p)
 {
     ucp_worker_memory_allocator_obj_t *allocator =
@@ -864,7 +859,7 @@ memory_allocator_chunk_alloc(ucs_mpool_t *mp, size_t *size_p, void **chunk_p)
     return status;
 }
 
-void memory_allocator_chunk_release(ucs_mpool_t *mp, void *chunk)
+static void memory_allocator_chunk_release(ucs_mpool_t *mp, void *chunk)
 {
     const ucp_worker_memory_allocator_obj_t *allocator =
             (ucp_worker_memory_allocator_obj_t*)mp;
@@ -884,7 +879,7 @@ static ucs_mpool_ops_t memory_allocator_ops = {
     NULL
 };
 
-ucs_status_t
+static ucs_status_t
 memory_allocator_init(ucp_context_h context, const size_t buffer_size,
                       ucp_worker_memory_allocator_obj_t **allocator_obj)
 {
@@ -894,8 +889,8 @@ memory_allocator_init(ucp_context_h context, const size_t buffer_size,
     ucs_mpool_params_t mp_params;
     ucs_status_t status;
 
-    allocator->memh = NULL;
     ucs_mpool_params_reset(&mp_params);
+    allocator->memh           = NULL;
     allocator->context        = context;
     allocator->payload_length = buffer_size;
     mp_params.priv_size       = 0;
@@ -910,6 +905,7 @@ memory_allocator_init(ucp_context_h context, const size_t buffer_size,
     if (status != UCS_OK) {
         return status;
     }
+
     ucs_mpool_grow(&allocator->mpool, allocator->mpool.data->elems_per_chunk);
 
     *allocator_obj = allocator;
@@ -944,12 +940,11 @@ static void memory_allocator_free(void *obj)
     ucs_mpool_put((void*)obj);
 }
 
-void memory_allocator_destroy(ucp_worker_memory_allocator_obj_t *allocator)
+static void
+memory_allocator_destroy(ucp_worker_memory_allocator_obj_t *allocator)
 {
-    if (allocator) {
-        ucs_mpool_cleanup(&allocator->mpool, 0);
-        free(allocator);
-    }
+    ucs_mpool_cleanup(&allocator->mpool, 0);
+    free(allocator);
 }
 
 /**
@@ -1309,14 +1304,19 @@ int main(int argc, char **argv)
     ucp_worker_h  ucp_worker;
 
     /*
-     * Modify environment to prevent RX hdr and payload mpools from growing. 
+     * Accourding to User allocator API ucp_mem_allocator_cb_t
+     * is expected to return a group of buffers that share the
+     * same memory handle.
+     * Default allocator implementation is relying on iface's mpools.
+     * To make sure that default allocator cb fallows the API
+     * we need to prevent the iface's memory pools from growing.
      */
-    snprintf(chunk_size_env, 256, "UCX_DC_MLX5_RX_BUFS_GROW=%d",
-             ALLOCATOR_NUM_OF_BUFFERS);
-    putenv(chunk_size_env);
-    snprintf(max_buffs_env, 256, "UCX_DC_MLX5_RX_MAX_BUFS=%d",
-             ALLOCATOR_NUM_OF_BUFFERS);
-    putenv(max_buffs_env);
+    snprintf(chunk_size_env, 256, "%d", ALLOCATOR_NUM_OF_BUFFERS);
+    snprintf(max_buffs_env, 256, "%d", ALLOCATOR_NUM_OF_BUFFERS);
+    setenv("UCX_RC_MLX5_RX_BUFS_GROW", chunk_size_env, 1);
+    setenv("UCX_RC_MLX5_RX_MAX_BUFS", max_buffs_env, 1);
+    setenv("UCX_DC_MLX5_RX_BUFS_GROW", chunk_size_env, 1);
+    setenv("UCX_DC_MLX5_RX_MAX_BUFS", max_buffs_env, 1);
 
     ret = parse_cmd(argc, argv, &server_addr, &listen_addr, &send_recv_type);
     if (ret != 0) {

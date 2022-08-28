@@ -174,8 +174,7 @@ enum ucp_worker_params_field {
                                                              messages on the receiver */
     UCP_WORKER_PARAM_FIELD_CLIENT_ID      = UCS_BIT(8), /**< Client id */
     UCP_WORKER_PARAM_FIELD_USER_ALLOCATOR = UCS_BIT(9)  /**< Pass user allocator to worker
-                                                             to use for AM payload buffers.
-                                                             Supporting only rcx/dcx transports.*/
+                                                             to use for AM payload buffers.*/
 };
 
 
@@ -1361,6 +1360,7 @@ typedef struct ucp_worker_params {
 
         /**
          * User memory allocator payload's buffer size.
+         * This will be the size of the active message fragment.
          */
         size_t                 buffer_size;
     } user_allocator;
@@ -1879,6 +1879,9 @@ struct ucp_am_recv_param {
 
     /**
      * Payload of the received message.
+     * With user allocator this is a buffer previosly
+     * provided by this allocator.
+     * Otherwise, it's an internally allocated buffer.
      * Relevant only for eager protocols.
      */
     void               *payload;
