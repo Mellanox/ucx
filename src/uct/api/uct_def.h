@@ -27,7 +27,7 @@
 #define UCT_INVALID_RKEY           ((uintptr_t)(-1))
 #define UCT_INLINE_API             static UCS_F_ALWAYS_INLINE
 
-/** 
+/**
  * UCT RX allocator cache size.
  * This is the maximal capacity of buffers array.
  * */
@@ -949,9 +949,9 @@ typedef void (*uct_async_event_cb_t)(void *arg, unsigned flags);
  *
  * @param [in]  arg            User-defined argument for the allocator callback.
  * @param [in]  num_of_buffers Number of buffers required.
- * 
+ *
  * @param [out] memh           Memory handle associated with the returned buffers.
- *                             @note It's assumed that all buffers returned by 
+ *                             @note It's assumed that all buffers returned by
  *                             this callback share the same memory handle
  * @param [out] buffers        Returned buffers.
  *
