@@ -398,8 +398,6 @@ uct_rc_mlx5_iface_common_am_handler(uct_rc_mlx5_iface_common_t *iface,
                                     uct_rc_mlx5_hdr_t *hdr, unsigned flags,
                                     unsigned byte_len, int poll_flags)
 {
-    uct_rc_mlx5_hdr_t *concatenated_hdr = hdr;
-    size_t client_hdr_len = iface->super.super.super.rx_allocator.header_length;
     uint16_t wqe_ctr;
     uct_rc_iface_ops_t *rc_ops;
     uct_ib_mlx5_srq_seg_t *seg;
@@ -407,7 +405,6 @@ uct_rc_mlx5_iface_common_am_handler(uct_rc_mlx5_iface_common_t *iface,
     ucs_status_t status;
     void *payload;
     uct_am_callback_params_t params;
-    size_t tl_desc_hdr_part_length;
 
     wqe_ctr           = ntohs(cqe->wqe_counter);
     seg               = uct_ib_mlx5_srq_get_wqe(&iface->rx.srq, wqe_ctr);
@@ -423,16 +420,8 @@ uct_rc_mlx5_iface_common_am_handler(uct_rc_mlx5_iface_common_t *iface,
         rc_ops = ucs_derived_of(iface->super.super.ops, uct_rc_iface_ops_t);
 
         /* coverity[overrun-buffer-val] */
-        tl_desc_hdr_part_length = sizeof(*hdr) + client_hdr_len;
-        concatenated_hdr        = ucs_alloca(byte_len);
-        memcpy(concatenated_hdr, hdr, tl_desc_hdr_part_length);
-        if (byte_len > tl_desc_hdr_part_length) {
-            memcpy(UCS_PTR_BYTE_OFFSET(concatenated_hdr,
-                                       tl_desc_hdr_part_length),
-                   payload, byte_len - tl_desc_hdr_part_length);
-        }
         status = rc_ops->fc_handler(&iface->super, qp_num,
-                                    &concatenated_hdr->rc_hdr,
+                                    &hdr->rc_hdr,
                                     byte_len - sizeof(*hdr),
                                     cqe->imm_inval_pkey, cqe->slid, flags,
                                     &params);
