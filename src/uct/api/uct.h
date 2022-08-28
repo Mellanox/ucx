@@ -1214,7 +1214,7 @@ struct uct_iface_params {
     /* rx allocator header length */
     size_t                                       rx_header_length;
 
-    /** 
+    /**
      * Size of the payload receive buffer used by
      * this interface for incoming active messages.
      */

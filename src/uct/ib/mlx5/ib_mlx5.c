@@ -807,9 +807,9 @@ ucs_status_t uct_ib_mlx5_get_rxwq(struct ibv_qp *verbs_qp, uct_ib_mlx5_rxwq_t *r
     return UCS_OK;
 }
 
-ucs_status_t uct_ib_mlx5_verbs_srq_init(uct_ib_mlx5_srq_t *srq,
-                                        struct ibv_srq *verbs_srq, int sge_num,
-                                        uint32_t *head, uint32_t *tail)
+ucs_status_t
+uct_ib_mlx5_verbs_srq_init(uct_ib_mlx5_srq_t *srq, struct ibv_srq *verbs_srq,
+                           size_t *sg_byte_count, int sge_num)
 {
     uct_ib_mlx5dv_srq_t srq_info = {};
     uct_ib_mlx5dv_t obj          = {};
@@ -852,14 +852,14 @@ ucs_status_t uct_ib_mlx5_verbs_srq_init(uct_ib_mlx5_srq_t *srq,
 
     srq->buf = srq_info.dv.buf;
     srq->db  = srq_info.dv.dbrec;
-    *head    = srq_info.dv.head;
-    *tail    = srq_info.dv.tail;
+    uct_ib_mlx5_srq_buff_init(srq, srq_info.dv.head, srq_info.dv.tail,
+                              sg_byte_count, sge_num);
 
     return UCS_OK;
 }
 
 void uct_ib_mlx5_srq_buff_init(uct_ib_mlx5_srq_t *srq, uint32_t head,
-                               uint32_t tail, size_t sg_byte_count, int sge_num)
+                               uint32_t tail, size_t *sg_byte_count, int sge_num)
 {
     uct_ib_mlx5_srq_seg_t *seg;
     unsigned i, j;
@@ -878,32 +878,6 @@ void uct_ib_mlx5_srq_buff_init(uct_ib_mlx5_srq_t *srq, uint32_t head,
         seg->srq.desc           = NULL;
         seg->srq.strides        = sge_num;
         for (j = 0; j < sge_num; ++j) {
-            seg->dptr[j].byte_count = htonl(sg_byte_count);
-        }
-    }
-}
-
-void uct_ib_mlx5_srq_buff_init_sg(uct_ib_mlx5_srq_t *srq, uint32_t head,
-                                  uint32_t tail, size_t *sg_byte_count,
-                                  int num_sge)
-{
-    uct_ib_mlx5_srq_seg_t *seg;
-    unsigned i, j;
-
-    srq->free_idx  = tail;
-    srq->ready_idx = UINT16_MAX;
-    srq->sw_pi     = UINT16_MAX;
-    srq->mask      = tail;
-    srq->stride    = uct_ib_mlx5_srq_stride(num_sge);
-
-    for (i = head; i <= tail; ++i) {
-        seg                     = uct_ib_mlx5_srq_get_wqe(srq, i);
-        seg->srq.next_wqe_index = htons((i + 1) & tail);
-        seg->srq.ptr_mask       = 0;
-        seg->srq.free           = 0;
-        seg->srq.desc           = NULL;
-        seg->srq.strides        = num_sge;
-        for (j = 0; j < num_sge; ++j) {
             seg->dptr[j].byte_count = htonl(sg_byte_count[j]);
         }
     }

@@ -58,8 +58,8 @@ static uint16_t server_port    = DEFAULT_PORT;
 static sa_family_t ai_family   = AF_INET;
 static int num_iterations      = DEFAULT_NUM_ITERATIONS;
 static int user_allocator      = 0;
-int available_rdesc_idx        = 0;
-static void *held_rdescs[ALLOCATOR_NUM_OF_BUFFERS];
+int next_held_data_desc_idx    = 0;
+static void *held_data_descs[ALLOCATOR_NUM_OF_BUFFERS];
 
 
 typedef enum {
@@ -111,17 +111,34 @@ static void usage(void);
  */
 static void memory_allocator_free(void *obj);
 
-void release_held_rdescs(ucp_worker_h worker) {
+/* 
+ * Release the data descs that was held by AM CB.
+ */
+static void release_held_data_descs(ucp_worker_h worker)
+{
     int i;
 
-    if (!user_allocator) {
+    if (user_allocator) {
         return;
     }
 
-    for (i = 0; i < available_rdesc_idx; i++) {
-        ucp_am_data_release(worker, held_rdescs[i]);
+    for (i = 0; i < next_held_data_desc_idx; i++) {
+        ucp_am_data_release(worker, held_data_descs[i]);
     }
-    available_rdesc_idx = 0;
+    next_held_data_desc_idx = 0;
+}
+
+/* 
+ * Save data desc for future release.
+ */
+static void hold_data_desc(void *data_desc)
+{
+    ucs_assertv(next_held_data_desc_idx < ALLOCATOR_NUM_OF_BUFFERS,
+                "Number of held data descs exceed held_data_descs array "
+                "capacity %d",
+                ALLOCATOR_NUM_OF_BUFFERS);
+    held_data_descs[next_held_data_desc_idx] = data_desc;
+    next_held_data_desc_idx++;
 }
 
 void buffer_free(ucp_dt_iov_t *iov)
@@ -502,7 +519,7 @@ ucs_status_t ucp_am_data_cb(void *arg, const void *header, size_t header_length,
     size_t idx;
     size_t offset;
 
-    release_held_rdescs((ucp_worker_h)arg);
+    release_held_data_descs((ucp_worker_h)arg);
 
     if (length != iov_cnt * test_string_length) {
         fprintf(stderr, "received wrong data length %ld (expected %ld)", length,
@@ -544,8 +561,11 @@ ucs_status_t ucp_am_data_cb(void *arg, const void *header, size_t header_length,
     if (user_allocator) {
         memory_allocator_free(param->payload);
     } else {
-        held_rdescs[available_rdesc_idx] = data;
-        available_rdesc_idx++;
+        /* 
+         * Save data desc for future release before returning IN_PROGRESS.
+         * The held data descs will be release in the next call for the AM CB.
+         */
+        hold_data_desc(data);
     }
 
     return UCS_INPROGRESS;
@@ -639,6 +659,7 @@ static void usage()
     fprintf(stderr, "  -v Number of buffers in a single data "
                     "transfer function call. (default = %ld).\n",
                     iov_cnt);
+    fprintf(stderr, "  -u Use this option to run the example with rx buffers allocator implementing the user allocator API.\n");
     print_common_help();
     fprintf(stderr, "\n");
 }
@@ -791,18 +812,18 @@ static int client_server_communication(ucp_worker_h worker, ucp_ep_h ep,
  * Implementation of memory allocator based on ucs mpool
  * following new user memory allocator API
  */
-typedef struct mpool_allocator_obj {
+typedef struct memory_allocator_obj {
     ucs_mpool_t   mpool;
     ucp_context_h context;
     size_t        payload_length;
     ucp_mem_h     memh;
-} ucp_worker_mpool_allocator_obj_t;
+} ucp_worker_memory_allocator_obj_t;
 
-ucs_status_t
+static ucs_status_t
 memory_allocator_chunk_alloc(ucs_mpool_t *mp, size_t *size_p, void **chunk_p)
 {
-    ucp_worker_mpool_allocator_obj_t *allocator =
-            (ucp_worker_mpool_allocator_obj_t*)mp;
+    ucp_worker_memory_allocator_obj_t *allocator =
+            (ucp_worker_memory_allocator_obj_t*)mp;
     const ucp_context_h context = allocator->context;
     ucp_mem_h memh              = NULL;
     ucs_status_t status;
@@ -838,10 +859,10 @@ memory_allocator_chunk_alloc(ucs_mpool_t *mp, size_t *size_p, void **chunk_p)
     return status;
 }
 
-void memory_allocator_chunk_release(ucs_mpool_t *mp, void *chunk)
+static void memory_allocator_chunk_release(ucs_mpool_t *mp, void *chunk)
 {
-    const ucp_worker_mpool_allocator_obj_t *allocator =
-            (ucp_worker_mpool_allocator_obj_t*)mp;
+    const ucp_worker_memory_allocator_obj_t *allocator =
+            (ucp_worker_memory_allocator_obj_t*)mp;
     ucp_mem_attr_t memh_attr;
 
     memh_attr.field_mask = UCP_MEM_ATTR_FIELD_ADDRESS;
@@ -858,18 +879,18 @@ static ucs_mpool_ops_t memory_allocator_ops = {
     NULL
 };
 
-ucs_status_t
+static ucs_status_t
 memory_allocator_init(ucp_context_h context, const size_t buffer_size,
-                      ucp_worker_mpool_allocator_obj_t **allocator_obj)
+                      ucp_worker_memory_allocator_obj_t **allocator_obj)
 {
-    ucp_worker_mpool_allocator_obj_t *allocator =
-            (ucp_worker_mpool_allocator_obj_t*)malloc(
-                    sizeof(ucp_worker_mpool_allocator_obj_t));
+    ucp_worker_memory_allocator_obj_t *allocator =
+            (ucp_worker_memory_allocator_obj_t*)malloc(
+                    sizeof(ucp_worker_memory_allocator_obj_t));
     ucs_mpool_params_t mp_params;
     ucs_status_t status;
 
-    allocator->memh = NULL;
     ucs_mpool_params_reset(&mp_params);
+    allocator->memh           = NULL;
     allocator->context        = context;
     allocator->payload_length = buffer_size;
     mp_params.priv_size       = 0;
@@ -884,6 +905,7 @@ memory_allocator_init(ucp_context_h context, const size_t buffer_size,
     if (status != UCS_OK) {
         return status;
     }
+
     ucs_mpool_grow(&allocator->mpool, allocator->mpool.data->elems_per_chunk);
 
     *allocator_obj = allocator;
@@ -895,8 +917,8 @@ static size_t memory_allocator_get_buff(void *allocator_obj,
                                         size_t num_of_buffers, void **buffers,
                                         ucp_mem_h *memh)
 {
-    ucp_worker_mpool_allocator_obj_t *allocator =
-            (ucp_worker_mpool_allocator_obj_t*)allocator_obj;
+    ucp_worker_memory_allocator_obj_t *allocator =
+            (ucp_worker_memory_allocator_obj_t*)allocator_obj;
     void *obj;
     size_t buff_idx;
 
@@ -918,19 +940,18 @@ static void memory_allocator_free(void *obj)
     ucs_mpool_put((void*)obj);
 }
 
-void memory_allocator_destroy(ucp_worker_mpool_allocator_obj_t *allocator)
+static void
+memory_allocator_destroy(ucp_worker_memory_allocator_obj_t *allocator)
 {
     ucs_mpool_cleanup(&allocator->mpool, 0);
-    if (allocator) {
-        free(allocator);
-    }
+    free(allocator);
 }
 
 /**
  * Create a ucp worker on the given ucp context.
  */
 static int init_worker(ucp_context_h ucp_context, ucp_worker_h *ucp_worker,
-                       ucp_worker_mpool_allocator_obj_t *allocator_obj)
+                       ucp_worker_memory_allocator_obj_t *allocator_obj)
 {
     ucp_worker_params_t worker_params;
     ucs_status_t status;
@@ -1094,7 +1115,7 @@ out:
 static int run_server(ucp_context_h ucp_context, ucp_worker_h ucp_worker,
                       char *listen_addr, send_recv_type_t send_recv_type)
 {
-    ucp_worker_mpool_allocator_obj_t *allocator_obj = NULL;
+    ucp_worker_memory_allocator_obj_t *allocator_obj = NULL;
     ucx_server_ctx_t       context;
     ucp_worker_h           ucp_data_worker;
     ucp_am_handler_param_t param;
@@ -1197,7 +1218,7 @@ err_allocator:
         memory_allocator_destroy(allocator_obj);
     }
 err:
-    release_held_rdescs(ucp_data_worker);
+    release_held_data_descs(ucp_data_worker);
     return ret;
 }
 
@@ -1274,42 +1295,32 @@ int main(int argc, char **argv)
     send_recv_type_t send_recv_type = CLIENT_SERVER_SEND_RECV_DEFAULT;
     char *server_addr = NULL;
     char *listen_addr = NULL;
-    char num_of_buffers[256];
     int ret;
+    char chunk_size_env[256];
+    char max_buffs_env[256];
 
     /* UCP objects */
-    ucp_config_t *config = NULL;
     ucp_context_h ucp_context;
     ucp_worker_h  ucp_worker;
+
+    /*
+     * Accourding to User allocator API ucp_mem_allocator_cb_t
+     * is expected to return a group of buffers that share the
+     * same memory handle.
+     * Default allocator implementation is relying on iface's mpools.
+     * To make sure that default allocator cb fallows the API
+     * we need to prevent the iface's memory pools from growing.
+     */
+    snprintf(chunk_size_env, 256, "%d", ALLOCATOR_NUM_OF_BUFFERS);
+    snprintf(max_buffs_env, 256, "%d", ALLOCATOR_NUM_OF_BUFFERS);
+    setenv("UCX_RC_MLX5_RX_BUFS_GROW", chunk_size_env, 1);
+    setenv("UCX_RC_MLX5_RX_MAX_BUFS", max_buffs_env, 1);
+    setenv("UCX_DC_MLX5_RX_BUFS_GROW", chunk_size_env, 1);
+    setenv("UCX_DC_MLX5_RX_MAX_BUFS", max_buffs_env, 1);
 
     ret = parse_cmd(argc, argv, &server_addr, &listen_addr, &send_recv_type);
     if (ret != 0) {
         goto err;
-    }
-
-    if (!user_allocator) {
-        ret = ucp_config_read(NULL, NULL, &config);
-        if (ret != UCS_OK) {
-            goto err;
-        }
-
-        ret = ucp_config_modify(config, "MAX_CHUNK_SIZE", "-1");
-        if (ret != UCS_OK) {
-            goto err;
-        }
-
-        snprintf(num_of_buffers, 256, "%d", ALLOCATOR_NUM_OF_BUFFERS);
-        ret = ucp_config_modify(config, "UCX_DC_MLX5_RX_BUFS_GROW",
-                                num_of_buffers);
-        if (ret != UCS_OK) {
-            goto err;
-        }
-
-        ret = ucp_config_modify(config, "UCX_DC_MLX5_RX_MAX_BUFS",
-                                num_of_buffers);
-        if (ret != UCS_OK) {
-            goto err;
-        }
     }
 
     /* Initialize the UCX required objects */
@@ -1330,8 +1341,5 @@ int main(int argc, char **argv)
     ucp_worker_destroy(ucp_worker);
     ucp_cleanup(ucp_context);
 err:
-    if (config) {
-        ucp_config_release(config);
-    }
     return ret;
 }
