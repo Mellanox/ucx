@@ -352,7 +352,9 @@ ucs_status_t uct_rc_init_fc_thresh(uct_rc_iface_config_t *config,
 
 ucs_status_t uct_rc_iface_fc_handler(uct_rc_iface_t *iface, unsigned qp_num,
                                      uct_rc_hdr_t *hdr, unsigned length,
-                                     uint32_t imm_data, uint16_t lid, unsigned flags)
+                                     uint32_t imm_data, uint16_t lid,
+                                     unsigned flags,
+                                     uct_am_callback_params_t *params)
 {
     ucs_status_t status;
     int16_t      cur_wnd;
@@ -429,7 +431,7 @@ ucs_status_t uct_rc_iface_fc_handler(uct_rc_iface_t *iface, unsigned qp_num,
 out:
     return uct_iface_invoke_am(&iface->super.super,
                                (hdr->am_id & ~UCT_RC_EP_FC_MASK), hdr + 1,
-                               length, flags, NULL);
+                               length, flags, params);
 }
 
 static ucs_status_t uct_rc_iface_tx_ops_init(uct_rc_iface_t *iface)

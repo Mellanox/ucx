@@ -197,13 +197,10 @@ typedef void (*uct_rc_iface_cleanup_rx_func_t)(uct_rc_iface_t *iface);
 typedef ucs_status_t (*uct_rc_iface_fc_ctrl_func_t)(uct_ep_t *ep, unsigned op,
                                                     uct_rc_pending_req_t *req);
 
-typedef ucs_status_t (*uct_rc_iface_fc_handler_func_t)(uct_rc_iface_t *iface,
-                                                       unsigned qp_num,
-                                                       uct_rc_hdr_t *hdr,
-                                                       unsigned length,
-                                                       uint32_t imm_data,
-                                                       uint16_t lid,
-                                                       unsigned flags);
+typedef ucs_status_t (*uct_rc_iface_fc_handler_func_t)(
+        uct_rc_iface_t *iface, unsigned qp_num, uct_rc_hdr_t *hdr,
+        unsigned length, uint32_t imm_data, uint16_t lid, unsigned flags,
+        uct_am_callback_params_t *params);
 
 typedef void (*uct_rc_iface_qp_cleanup_func_t)(
         uct_rc_iface_qp_cleanup_ctx_t *cleanup_ctx);
@@ -415,7 +412,9 @@ ucs_status_t uct_rc_iface_qp_connect(uct_rc_iface_t *iface, struct ibv_qp *qp,
 
 ucs_status_t uct_rc_iface_fc_handler(uct_rc_iface_t *iface, unsigned qp_num,
                                      uct_rc_hdr_t *hdr, unsigned length,
-                                     uint32_t imm_data, uint16_t lid, unsigned flags);
+                                     uint32_t imm_data, uint16_t lid,
+                                     unsigned flags,
+                                     uct_am_callback_params_t *params);
 
 ucs_status_t uct_rc_init_fc_thresh(uct_rc_iface_config_t *rc_cfg,
                                    uct_rc_iface_t *iface);

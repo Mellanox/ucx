@@ -1066,7 +1066,8 @@ void uct_dc_mlx5_fc_entry_iter_del(uct_dc_mlx5_iface_t *iface, khiter_t it)
 static ucs_status_t
 uct_dc_mlx5_iface_fc_handler(uct_rc_iface_t *rc_iface, unsigned qp_num,
                              uct_rc_hdr_t *hdr, unsigned length,
-                             uint32_t imm_data, uint16_t lid, unsigned flags)
+                             uint32_t imm_data, uint16_t lid, unsigned flags,
+                             uct_am_callback_params_t *params)
 {
     uct_dc_mlx5_iface_t *iface = ucs_derived_of(rc_iface, uct_dc_mlx5_iface_t);
     uint8_t fc_hdr             = uct_rc_fc_get_fc_hdr(hdr->am_id);

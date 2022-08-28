@@ -409,9 +409,11 @@ uct_rc_mlx5_iface_common_am_handler(uct_rc_mlx5_iface_common_t *iface,
     uct_am_callback_params_t params;
     size_t tl_desc_hdr_part_length;
 
-    wqe_ctr = ntohs(cqe->wqe_counter);
-    seg     = uct_ib_mlx5_srq_get_wqe(&iface->rx.srq, wqe_ctr);
-    payload = seg->srq.desc->payload;
+    wqe_ctr           = ntohs(cqe->wqe_counter);
+    seg               = uct_ib_mlx5_srq_get_wqe(&iface->rx.srq, wqe_ctr);
+    payload           = seg->srq.desc->payload;
+    params.field_mask = UCT_AM_CALLBACK_PARAM_FIELD_PAYLOAD;
+    params.payload    = payload;
 
     uct_ib_mlx5_log_rx(&iface->super.super, cqe, hdr,
                        uct_rc_mlx5_common_packet_dump);
@@ -425,15 +427,16 @@ uct_rc_mlx5_iface_common_am_handler(uct_rc_mlx5_iface_common_t *iface,
         concatenated_hdr        = ucs_alloca(byte_len);
         memcpy(concatenated_hdr, hdr, tl_desc_hdr_part_length);
         if (byte_len > tl_desc_hdr_part_length) {
-            memcpy(UCS_PTR_BYTE_OFFSET(concatenated_hdr, tl_desc_hdr_part_length),
-                    payload, byte_len - tl_desc_hdr_part_length);
+            memcpy(UCS_PTR_BYTE_OFFSET(concatenated_hdr,
+                                       tl_desc_hdr_part_length),
+                   payload, byte_len - tl_desc_hdr_part_length);
         }
-        status = rc_ops->fc_handler(&iface->super, qp_num, &concatenated_hdr->rc_hdr,
-                                     byte_len - sizeof(*hdr),
-                                     cqe->imm_inval_pkey, cqe->slid, flags);
+        status = rc_ops->fc_handler(&iface->super, qp_num,
+                                    &concatenated_hdr->rc_hdr,
+                                    byte_len - sizeof(*hdr),
+                                    cqe->imm_inval_pkey, cqe->slid, flags,
+                                    &params);
     } else {
-        params.field_mask = UCT_AM_CALLBACK_PARAM_FIELD_PAYLOAD;
-        params.payload    = payload;
         status = uct_iface_invoke_am(&iface->super.super.super,
                                      hdr->rc_hdr.am_id, hdr + 1,
                                      byte_len - sizeof(*hdr), flags, &params);
