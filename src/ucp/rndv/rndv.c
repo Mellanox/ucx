@@ -1840,7 +1840,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_rts_handler,
 
     rts_hdr = (ucp_rndv_rts_hdr_t*)(rdesc + 1);
     if (ucp_rndv_rts_is_am(rts_hdr)) {
-        ucp_am_rndv_process_rts(arg, rts_hdr, length, tl_flags);
+        ucp_am_rndv_process_rts(arg, rdesc, length, tl_flags);
         return UCS_OK;
     } else {
         ucs_assert(ucp_rndv_rts_is_tag(rts_hdr));

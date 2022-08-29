@@ -1615,12 +1615,12 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_am_long_middle_handler,
 void ucp_am_rndv_process_rts(void *arg, void *data, size_t length,
                              unsigned tl_flags)
 {
-    ucp_rndv_rts_hdr_t *rts = data;
+    ucp_recv_desc_t *desc   = data;
+    ucp_rndv_rts_hdr_t *rts = (ucp_rndv_rts_hdr_t*)(desc + 1);
     ucp_worker_h worker     = arg;
     ucp_am_hdr_t *am        = ucp_am_hdr_from_rts(rts);
     uint16_t am_id          = am->am_id;
-    ucp_recv_desc_t *desc = UCS_PTR_BYTE_OFFSET(data, -sizeof(ucp_recv_desc_t));
-    ucp_am_entry_t *am_cb = &ucs_array_elem(&worker->am.cbs, am_id);
+    ucp_am_entry_t *am_cb   = &ucs_array_elem(&worker->am.cbs, am_id);
     ucp_ep_h ep;
     ucp_am_recv_param_t param;
     ucs_status_t status;
@@ -1680,6 +1680,7 @@ out_send_ats:
     /* Some error occurred or user does not need this data. Send ATS back to the
      * sender to complete its send request. */
     ucp_am_rndv_send_ats(worker, rts, status);
+    ucp_recv_desc_release(desc);
 
 out:
     if (desc != NULL) {
