@@ -578,8 +578,15 @@ uct_rc_mlx5_handle_rndv_fin(uct_rc_mlx5_iface_common_t *iface, uint32_t app_ctx)
 
 extern ucs_config_field_t uct_rc_mlx5_common_config_table[];
 
-unsigned uct_rc_mlx5_iface_srq_post_recv(uct_rc_mlx5_iface_common_t *iface);
-unsigned uct_rc_mlx5_iface_srq_post_recv_ll(uct_rc_mlx5_iface_common_t *iface);
+typedef ucs_status_t
+uct_rc_mlx5_iface_set_seg_func(uct_rc_mlx5_iface_common_t *iface,
+                               uct_ib_mlx5_srq_seg_t *seg);
+unsigned
+uct_rc_mlx5_iface_srq_post_recv(uct_rc_mlx5_iface_common_t *iface,
+                                uct_rc_mlx5_iface_set_seg_func set_seg);
+unsigned
+uct_rc_mlx5_iface_srq_post_recv_ll(uct_rc_mlx5_iface_common_t *iface,
+                                   uct_rc_mlx5_iface_set_seg_func set_seg);
 
 void uct_rc_mlx5_iface_common_prepost_recvs(uct_rc_mlx5_iface_common_t *iface);
 
