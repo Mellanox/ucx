@@ -25,6 +25,9 @@ static ucs_status_t
 uct_rc_mlx5_iface_common_srq_set_seg_sge(uct_rc_mlx5_iface_common_t *iface,
                                          uct_ib_mlx5_srq_seg_t *seg);
 
+static void
+uct_rc_mlx5_iface_srq_post_recv_common(uct_rc_mlx5_iface_common_t *iface);
+
 static UCS_F_ALWAYS_INLINE void
 uct_rc_mlx5_ep_fence_put(uct_rc_mlx5_iface_common_t *iface, uct_ib_mlx5_txwq_t *txwq,
                          uct_rkey_t *rkey, uint64_t *addr, uint16_t offset)
@@ -1574,13 +1577,7 @@ out:
                         iface, uct_rc_mlx5_iface_common_srq_set_seg);
             }
         } else {
-            if (ucs_likely(!UCT_RC_MLX5_MP_ENABLED(iface))) {
-                uct_rc_mlx5_iface_srq_post_recv(
-                        iface, uct_rc_mlx5_iface_common_srq_set_seg_sge);
-            } else {
-                uct_rc_mlx5_iface_srq_post_recv(
-                        iface, uct_rc_mlx5_iface_common_srq_set_seg);
-            }
+            uct_rc_mlx5_iface_srq_post_recv_common(iface);
         }
     }
     return count;
@@ -2030,4 +2027,16 @@ uct_rc_mlx5_iface_common_srq_set_seg_sge(uct_rc_mlx5_iface_common_t *iface,
     }
 
     return UCS_OK;
+}
+
+static UCS_F_ALWAYS_INLINE void
+uct_rc_mlx5_iface_srq_post_recv_common(uct_rc_mlx5_iface_common_t *iface)
+{
+    if (ucs_likely(!UCT_RC_MLX5_MP_ENABLED(iface))) {
+        uct_rc_mlx5_iface_srq_post_recv(
+                iface, uct_rc_mlx5_iface_common_srq_set_seg_sge);
+    } else {
+        uct_rc_mlx5_iface_srq_post_recv(iface,
+                                        uct_rc_mlx5_iface_common_srq_set_seg);
+    }
 }

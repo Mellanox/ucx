@@ -192,13 +192,7 @@ void uct_rc_mlx5_iface_common_prepost_recvs(uct_rc_mlx5_iface_common_t *iface)
 
     iface->super.rx.srq.available = iface->super.rx.srq.quota;
     iface->super.rx.srq.quota     = 0;
-    if (ucs_likely(!UCT_RC_MLX5_MP_ENABLED(iface))) {
-        uct_rc_mlx5_iface_srq_post_recv(
-                iface, uct_rc_mlx5_iface_common_srq_set_seg_sge);
-    } else {
-        uct_rc_mlx5_iface_srq_post_recv(iface,
-                                        uct_rc_mlx5_iface_common_srq_set_seg);
-    }
+    uct_rc_mlx5_iface_srq_post_recv_common(iface);
 }
 
 #define UCT_RC_MLX5_DEFINE_ATOMIC_LE_HANDLER(_bits) \
