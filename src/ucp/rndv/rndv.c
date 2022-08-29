@@ -1788,52 +1788,21 @@ err:
     goto out;
 }
 
-static UCS_F_ALWAYS_INLINE ucs_status_t
-ucp_rndv_rts_recv_desc_init(ucp_worker_h worker, void *data, size_t length,
-                            uct_am_callback_params_t *params, const char *name,
-                            ucp_recv_desc_t **rdesc_p)
-{
-    ucp_recv_desc_t *rdesc;
-    ucs_status_t status;
-    ucp_rndv_rts_hdr_t *rts;
-
-    rdesc = (ucp_recv_desc_t*)ucs_mpool_set_get_inline(&worker->am_mps, length);
-    if (rdesc == NULL) {
-        *rdesc_p = NULL; /* To suppress compiler warning */
-        ucs_error("ucp recv descriptor is not allocated");
-        return UCS_ERR_NO_MEMORY;
-    }
-
-    rdesc->release_desc_offset = 0;
-
-    /* No need to initialize rdesc->priv_length here, because it is only
-        * needed for releasing UCT descriptor. */
-    rdesc->flags = UCP_RECV_DESC_FLAG_RNDV |
-                   UCP_RECV_DESC_FLAG_AM_CB_INPROGRESS;
-    status       = UCS_OK;
-    rts          = (ucp_rndv_rts_hdr_t*)(rdesc + 1);
-    memcpy(rts, data, sizeof(ucp_am_hdr_t));
-    memcpy(UCS_PTR_BYTE_OFFSET(rts, sizeof(ucp_am_hdr_t)), params->payload,
-           length - sizeof(ucp_am_hdr_t));
-
-    ucp_recv_desc_set_name(rdesc, name);
-    rdesc->length = length + rdesc->release_desc_offset;
-    *rdesc_p      = rdesc;
-    return status;
-}
-
 UCS_PROFILE_FUNC(ucs_status_t, ucp_rndv_rts_handler,
-                 (arg, data, length, tl_flags, params),
-                 void *arg, void *data, size_t length, unsigned tl_flags,
+                 (arg, data, length, tl_flags, params), void *arg, void *data,
+                 size_t length, unsigned tl_flags,
                  uct_am_callback_params_t *params)
 {
-    ucp_worker_h worker = arg;
+    const unsigned rdesc_flags = UCP_RECV_DESC_FLAG_RNDV |
+                                 UCP_RECV_DESC_FLAG_AM_CB_INPROGRESS;
+    ucp_worker_h worker        = arg;
     ucp_rndv_rts_hdr_t *rts_hdr;
     ucp_recv_desc_t *rdesc;
     ucs_status_t status;
 
-    status = ucp_rndv_rts_recv_desc_init(worker, data, length, params,
-                                         "am_rndv_process_rts", &rdesc);
+    status = ucp_recv_desc_init_new(worker, data, length, 0, 0, 0, rdesc_flags,
+                                    0, 1, params, "am_rndv_process_rts",
+                                    &rdesc);
     if (ucs_unlikely(status != UCS_OK)) {
         return status;
     }
