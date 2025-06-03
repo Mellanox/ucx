@@ -17,7 +17,7 @@ libucx_cuda_la_SOURCES = \
 SUFFIXES = .cu
 NVCC_WRAP = $(top_srcdir)/buildlib/tools/nvcc_wrap.sh
 .cu.lo:
-	$(LIBTOOL) --tag=CC --mode=compile $(NVCC_WRAP) -c $< -o $@
+	$(LIBTOOL) --tag=CC --mode=compile $(NVCC_WRAP) "$(NVCC)" -c $< -o $@
 
 # Library version info (major:minor:revision)
 libucx_cuda_la_LDFLAGS = -version-info 0:0:0

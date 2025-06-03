@@ -25,7 +25,7 @@ gdaki_HEADERS = gdaki_benchmark.h
 SUFFIXES = .cu
 NVCC_WRAP = $(top_srcdir)/buildlib/tools/nvcc_wrap.sh
 .cu.lo:
-	$(LIBTOOL) --tag=CXX --mode=compile $(NVCC_WRAP) -c $< -o $@ -DHAVE_CONFIG_H  $(BASE_CPPFLAGS)
+	$(LIBTOOL) --tag=CXX --mode=compile $(NVCC_WRAP) "$(NVCC)" -c $< -o $@ -DHAVE_CONFIG_H  $(BASE_CPPFLAGS)
 
 # Library version info (major:minor:revision)
 libperf_gdaki_la_LDFLAGS = -version-info 0:0:0
