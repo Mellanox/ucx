@@ -23,7 +23,7 @@ gdaki_HEADERS = gdaki_benchmark.h
 
 # Compile CUDA files with NVCC wrapper
 SUFFIXES = .cu
-NVCC_WRAP = $(srcdir)/nvcc_wrap.sh
+NVCC_WRAP = $(top_srcdir)/buildlib/tools/nvcc_wrap.sh
 .cu.lo:
 	$(LIBTOOL) --tag=CXX --mode=compile $(NVCC_WRAP) -c $< -o $@ -DHAVE_CONFIG_H  $(BASE_CPPFLAGS)
 

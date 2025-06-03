@@ -15,7 +15,7 @@ libucx_cuda_la_SOURCES = \
 
 # Compile CUDA files with NVCC wrapper
 SUFFIXES = .cu
-NVCC_WRAP = $(srcdir)/nvcc_wrap.sh
+NVCC_WRAP = $(top_srcdir)/buildlib/tools/nvcc_wrap.sh
 .cu.lo:
 	$(LIBTOOL) --tag=CC --mode=compile $(NVCC_WRAP) -c $< -o $@
 
