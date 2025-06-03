@@ -25,13 +25,13 @@ gdaki_HEADERS = gdaki_benchmark.h
 SUFFIXES = .cu
 NVCC_WRAP = $(srcdir)/nvcc_wrap.sh
 .cu.lo:
-	$(LIBTOOL) --tag=CXX --mode=compile $(NVCC_WRAP) -c $< -o $@
+	$(LIBTOOL) --tag=CXX --mode=compile $(NVCC_WRAP) -c $< -o $@ -DHAVE_CONFIG_H  $(BASE_CPPFLAGS)
 
 # Library version info (major:minor:revision)
 libperf_gdaki_la_LDFLAGS = -version-info 0:0:0
 
 # Include paths
-libperf_gdaki_la_CPPFLAGS = -I$(top_srcdir)/src
+libperf_gdaki_la_CPPFLAGS = $(BASE_CPPFLAGS) -I$(top_srcdir)/src
 
 # Link with CUDA runtime, GDRcopy and C++ standard library
 libperf_gdaki_la_LIBADD = -lcuda -lcudart -lstdc++

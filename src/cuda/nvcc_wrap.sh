@@ -1,7 +1,9 @@
 #!/bin/bash
 
+nvcc=/hpc/local/oss/cuda12.9.0/redhat8/bin/nvcc
 output=""
 src=""
+args=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -11,6 +13,14 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -c)
+            shift
+            ;;
+	    -I*)
+	        args="$args $1"
+	        shift
+	        ;;
+        -D*)
+            args="$args $1"
             shift
             ;;
         -*)
@@ -33,4 +43,7 @@ fi
 mkdir -p $(dirname "$output")
 
 # Call NVCC
-/hpc/local/oss/cuda12.4.0/redhat8/bin/nvcc -Xcompiler "-fPIC" $NVCC_FLAGS -c "$src" -o "$output"
+cmd="$nvcc --verbose -arch=sm_80 -Xcompiler -fPIC $NVCC_FLAGS -c $src -o $output $args"
+echo $cmd
+$cmd
+#$nvcc -Xcompiler "-fPIC" $NVCC_FLAGS -c "$src" -o "$output" $args 

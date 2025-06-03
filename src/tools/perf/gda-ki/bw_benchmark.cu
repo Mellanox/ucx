@@ -4,6 +4,7 @@
 #include <gdrapi.h>
 
 #include "libperf_cuda.h"
+// TODO: Maybe replace with Doca doca_gpu_mem_alloc.
 #include "gdaki_mem_handle.h"
 
 // Implementation of device function
@@ -76,7 +77,7 @@ extern "C" void launch_bw_test() {
 
     mem_handle = gdaki_mem_create(NULL, sizeof(ucx_perf_context_cuda_t));
     if (!mem_handle) {
-        printf("Failed to create GDRcopy memory handle using managed memory\n");
+        printf("Failed to create GDRcopy memory handle, using managed memory\n");
         cudaMallocManaged(&gpu_ctx, sizeof(ucx_perf_context_cuda_t));
         cpu_ctx = gpu_ctx;
     } else {
