@@ -641,7 +641,13 @@ public:
 
     ucs_status_t run_stream_req_uni_gdaki()
     {
-        launch_bw_test();
+        ucx_perf_context_cuda_t ctx = {0};
+
+        ctx.params.report_interval = 1000000000; // 1 second
+        ctx.params.max_iter = 10000;
+        ctx.params.max_outstanding = 100000;
+        ctx.params.m_sends_outstanding = 0;
+        launch_bw_test(&ctx);
         return UCS_OK;
     }
 

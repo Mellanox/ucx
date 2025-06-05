@@ -4,6 +4,12 @@
 #include <stddef.h>  // For size_t
 #include <stdint.h>  // For uint64_t
 
+#define NS_TO_SEC(ns) ((ns) / 1000000000.0)
+#define NS_TO_MS(ns) ((ns) / 1000000.0)
+#define NS_TO_US(ns) ((ns) / 1000.0)
+#define NS_TO_NS(ns) (ns)
+#define BYTES_TO_MB(bytes) ((bytes) / 1024.0 / 1024.0)
+
 typedef unsigned long long ucx_perf_cuda_time_t;
 
 //TODO: Replace with real packed batch API
@@ -42,7 +48,7 @@ typedef struct ucx_perf_params_cuda {
     double                    warmup_time;     /* Approximately how long to warm-up */
     uint64_t                  max_iter;        /* Iterations limit, 0 - unlimited */
     ucx_perf_cuda_time_t      max_time;        /* Time limit (seconds), 0 - unlimited */
-    ucx_perf_cuda_time_t      report_interval; /* Interval at which to call the report callback */
+    ucx_perf_cuda_time_t      report_interval; /* Interval at which to call the report callback in nanoseconds */
 
 } ucx_perf_params_cuda_t;
 
@@ -53,9 +59,7 @@ typedef struct ucx_perf_context_cuda {
     ucx_perf_cuda_time_t     start_time;      /* inaccurate end time (upper bound) */
     ucx_perf_cuda_time_t     end_time;        /* inaccurate end time (upper bound) */
     ucx_perf_cuda_time_t     prev_time;       /* time of previous iteration */
-    ucx_perf_cuda_time_t     report_interval; /* interval of showing report */
     uint64_t                 last_report;     /* last report to CPU */
-    uint64_t                 max_iter;
     volatile int             test_completed;    // Signal test completion
 
     int                      active_buffer;
@@ -70,56 +74,63 @@ typedef struct ucx_perf_context_cuda {
     volatile int             results_ready;     // Signal CPU to calculate and print
 } ucx_perf_context_cuda_t;
 
-void inline ucx_perf_calc_cuda_result(ucx_perf_context_cuda_t *perf, int read_buf, ucx_perf_cuda_result_t *result)
+void inline ucx_perf_calc_cuda_result(ucx_perf_context_cuda_t *perf, ucx_perf_cuda_result_t *result)
 {
-    result->latency.moment_average =
-        (perf->current[read_buf].time - perf->prev[read_buf].time)
-        / (perf->current[read_buf].iters - perf->prev[read_buf].iters);
-    
+    ucx_perf_cuda_time_t total_time = perf->current[0].time - perf->start_time;
+    uint64_t total_iters = perf->current[0].iters + perf->current[1].iters;
+    uint64_t total_bytes = perf->current[0].bytes + perf->current[1].bytes;
+    uint64_t total_msgs = perf->current[0].msgs + perf->current[1].msgs;
+
     result->latency.total_average =
-        (perf->current[read_buf].time - perf->start_time)
-        / perf->current[read_buf].iters;
+        total_time / total_iters;
+
+    result->bandwidth.total_average =
+        BYTES_TO_MB(total_bytes) / total_time;
+
+    result->msgrate.total_average =
+        total_msgs / total_time;
+}
+
+void inline ucx_perf_calc_cuda_moment_result(ucx_perf_context_cuda_t *perf, int read_buf, ucx_perf_cuda_result_t *result) {
+    double precise_time_diff_sec = NS_TO_SEC(perf->current[read_buf].time - perf->prev[read_buf].time);
+    // printf("iters: %lu, bytes: %lu, msgs: %lu time: %.3f\n", perf->current[read_buf].iters - perf->prev[read_buf].iters, 
+    //         perf->current[read_buf].bytes - perf->prev[read_buf].bytes, perf->current[read_buf].msgs - perf->prev[read_buf].msgs, precise_time_diff_sec);
+    result->latency.moment_average =
+        precise_time_diff_sec / (perf->current[read_buf].iters - perf->prev[read_buf].iters);
     
     result->bandwidth.moment_average =
-        (perf->current[read_buf].bytes - perf->prev[read_buf].bytes) /
-        (perf->current[read_buf].time - perf->prev[read_buf].time);
-    
-    result->bandwidth.total_average =
-        perf->current[read_buf].bytes /
-        (perf->current[read_buf].time - perf->start_time);
+        BYTES_TO_MB(perf->current[read_buf].bytes - perf->prev[read_buf].bytes) /
+        precise_time_diff_sec;
     
     result->msgrate.moment_average =
         (perf->current[read_buf].msgs - perf->prev[read_buf].msgs) /
-        (perf->current[read_buf].time - perf->prev[read_buf].time);
-
-    result->msgrate.total_average =
-        perf->current[read_buf].msgs /
-        (perf->current[read_buf].time - perf->start_time);
+        precise_time_diff_sec;
 }
 
 void inline ucx_perf_cuda_report(ucx_perf_cuda_result_t *result)
 {
     printf("Latency: %.3f ns\n", result->latency.moment_average);
-    printf("Bandwidth: %.2f Gbps\n", result->bandwidth.moment_average);
+    printf("Bandwidth: %.2f MB/s\n", result->bandwidth.moment_average);
     printf("Message rate: %.2f Mps\n", result->msgrate.moment_average);
 }
 
 #ifdef __CUDACC__
-#define GDAKI_DEVICE_GET_TIME_NS(globaltimer) asm volatile("mov.u64 %0, %globaltimer;" : "=l"(globaltimer))
 
-__device__ 
-static inline unsigned long long gdaki_get_time_ns(void) {
-    unsigned long long globaltimer;
-    GDAKI_DEVICE_GET_TIME_NS(globaltimer);
-    return globaltimer;
+__device__ __inline__ unsigned long long gdaki_get_time_ns()
+{
+	unsigned long long globaltimer;
+	// 64-bit GPU global nanosecond timer
+	asm volatile("mov.u64 %0, %globaltimer;" : "=l"(globaltimer));
+	return globaltimer;
 }
 
 __device__
 static inline void ucx_perf_cuda_update(ucx_perf_context_cuda_t *perf,
+                                        ucx_perf_cuda_time_t current_time,
                                         uint64_t iters,
                                         size_t bytes)
 {
-    perf->current[perf->active_buffer].time   = gdaki_get_time_ns(); // TODO: capture time
+    perf->current[perf->active_buffer].time   = current_time; // TODO: capture time
     perf->current[perf->active_buffer].iters += iters;
     perf->current[perf->active_buffer].bytes += bytes;
     perf->current[perf->active_buffer].msgs  += 1;

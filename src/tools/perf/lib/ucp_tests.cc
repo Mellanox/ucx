@@ -942,7 +942,8 @@ public:
     ucs_status_t run_stream_uni_gdaki()
     {
         printf("run_stream_uni_gdaki\n");
-        launch_bw_test();
+        ucx_perf_context_cuda_t ctx = {0};
+        launch_bw_test(&ctx);
         return UCS_OK;
     }
 
