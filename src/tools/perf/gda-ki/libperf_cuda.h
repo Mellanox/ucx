@@ -76,19 +76,20 @@ typedef struct ucx_perf_context_cuda {
 
 void inline ucx_perf_calc_cuda_result(ucx_perf_context_cuda_t *perf, ucx_perf_cuda_result_t *result)
 {
-    ucx_perf_cuda_time_t total_time = perf->current[0].time - perf->start_time;
+    double precise_total_time = perf->current[0].time - perf->start_time;
+    double precise_total_time_sec = NS_TO_SEC(precise_total_time);
     uint64_t total_iters = perf->current[0].iters + perf->current[1].iters;
     uint64_t total_bytes = perf->current[0].bytes + perf->current[1].bytes;
     uint64_t total_msgs = perf->current[0].msgs + perf->current[1].msgs;
 
     result->latency.total_average =
-        total_time / total_iters;
+        precise_total_time / total_iters;
 
     result->bandwidth.total_average =
-        BYTES_TO_MB(total_bytes) / total_time;
+        BYTES_TO_MB(total_bytes) / precise_total_time_sec;
 
     result->msgrate.total_average =
-        total_msgs / total_time;
+        total_msgs / precise_total_time_sec;
 }
 
 void inline ucx_perf_calc_cuda_moment_result(ucx_perf_context_cuda_t *perf, int read_buf, ucx_perf_cuda_result_t *result) {
