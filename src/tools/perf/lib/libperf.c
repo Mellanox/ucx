@@ -2235,9 +2235,11 @@ ucs_status_t ucx_perf_run(const ucx_perf_params_t *params,
             perf->ucp.self_recv_rkey = perf->ucp.tctx[0].perf.ucp.self_recv_rkey;
         }
 
-        status = ucx_perf_do_warmup(perf, params);
-        if (status != UCS_OK) {
-            goto out_cleanup;
+        if (!(perf->params.test_type == UCX_PERF_TEST_TYPE_STREAM_UNI_GDAKI)) {
+            status = ucx_perf_do_warmup(perf, params);
+            if (status != UCS_OK) {
+                goto out_cleanup;
+            }
         }
 
         /* Run test */
