@@ -16,8 +16,9 @@ libucx_cuda_la_SOURCES = \
 # Compile CUDA files with NVCC wrapper
 SUFFIXES = .cu
 NVCC_WRAP = $(top_srcdir)/buildlib/tools/nvcc_wrap.sh
+# TODO: define rule for .cu.lo, .cu.o and improve this rule to use predefined opts.
 .cu.lo:
-	$(LIBTOOL) --tag=CC --mode=compile $(NVCC_WRAP) "$(NVCC)" -c $< -o $@
+	$(LIBTOOL) --tag=CXX --mode=compile $(NVCC_WRAP) "$(NVCC)" -c $< -o $@ -DHAVE_CONFIG_H  $(BASE_CPPFLAGS)
 
 # Library version info (major:minor:revision)
 libucx_cuda_la_LDFLAGS = -version-info 0:0:0

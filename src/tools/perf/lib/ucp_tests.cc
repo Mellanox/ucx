@@ -932,13 +932,6 @@ public:
         return UCS_OK;
     }
 
-    ucs_status_t run_pingpong_gdaki()
-    {
-        printf("run_pingpong_gdaki\n");
-        launch_lat_test();
-        return UCS_OK;
-    }
-
     ucs_status_t run_stream_uni_gdaki()
     {
         printf("run_stream_uni_gdaki\n");
@@ -954,8 +947,6 @@ public:
         case UCX_PERF_TEST_TYPE_PINGPONG:
         case UCX_PERF_TEST_TYPE_PINGPONG_WAIT_MEM:
             return run_pingpong();
-        case UCX_PERF_TEST_TYPE_PINGPONG_GDAKI:
-            return run_pingpong_gdaki();
         case UCX_PERF_TEST_TYPE_STREAM_UNI:
             return run_stream_uni();
         case UCX_PERF_TEST_TYPE_STREAM_UNI_GDAKI:
@@ -1097,7 +1088,6 @@ static ucs_status_t ucp_perf_dispatch_osd(ucx_perf_context_t *perf)
                    (UCX_PERF_CMD_PUT, UCX_PERF_TEST_TYPE_PINGPONG),
                    (UCX_PERF_CMD_PUT, UCX_PERF_TEST_TYPE_PINGPONG_WAIT_MEM),
                    (UCX_PERF_CMD_PUT, UCX_PERF_TEST_TYPE_STREAM_UNI),
-                   (UCX_PERF_CMD_PUT_BATCH, UCX_PERF_TEST_TYPE_PINGPONG_GDAKI),
                    (UCX_PERF_CMD_PUT_BATCH, UCX_PERF_TEST_TYPE_STREAM_UNI_GDAKI),
                    (UCX_PERF_CMD_GET, UCX_PERF_TEST_TYPE_STREAM_UNI),
                    (UCX_PERF_CMD_ADD, UCX_PERF_TEST_TYPE_STREAM_UNI),

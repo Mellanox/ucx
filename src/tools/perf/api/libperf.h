@@ -45,7 +45,6 @@ typedef enum {
 
 typedef enum {
     UCX_PERF_TEST_TYPE_PINGPONG,         /* Ping-pong mode */
-    UCX_PERF_TEST_TYPE_PINGPONG_GDAKI,   /* Ping-pong mode with GDAKI */
     UCX_PERF_TEST_TYPE_PINGPONG_WAIT_MEM,/* Ping-pong mode with
                                             ucp_worker_wait_mem() */
     UCX_PERF_TEST_TYPE_STREAM_UNI,       /* Unidirectional stream */

@@ -9,8 +9,8 @@
 
 // Implementation of device function
 __device__ void uct_post_batch(uct_gdaki_packed_batch_t *batch) {
-    printf("GDAKI post batch dummy on block %d, thread %d!\n", 
-           blockIdx.x, threadIdx.x);
+    // printf("GDAKI post batch dummy on block %d, thread %d!\n", 
+        //    blockIdx.x, threadIdx.x);
 }
 
 // TODO: Remove, used for testing.
@@ -89,6 +89,7 @@ extern "C" void launch_bw_test(ucx_perf_context_cuda_t *ctx) {
     ucx_perf_cuda_time_t poll_interval;
     uct_gdaki_packed_batch_t *batch;
 
+    // TODO: Fix GDR copy.
     // mem_handle = gdaki_mem_create(NULL, sizeof(ucx_perf_context_cuda_t));
     if (1) {
         printf("Failed to create GDRcopy memory handle, using managed memory\n");

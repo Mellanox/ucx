@@ -128,4 +128,4 @@ void gdaki_mem_destroy(gdaki_mem_handle_t handle) {
     
     free(handle);
 #endif
-} 
+}
